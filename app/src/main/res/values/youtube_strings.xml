@@ -61,7 +61,7 @@
     <string translatable="false" name="youtube_cancel_download">Cancel download of %1$s</string>
     <string translatable="false" name="youtube_open_download">Open saved %1$s</string>
     <string translatable="false" name="youtube_download_picker_failed">Could not open a save location. Please choose a location that supports creating files.</string>
-    <string translatable="false" name="youtube_download_grant_failed">This location does not grant lasting write access. Choose another save location and try again.</string>
+    <string translatable="false" name="youtube_download_grant_failed">This location does not grant lasting read and write access. Choose another save location and try again.</string>
     <string translatable="false" name="youtube_download_generic">YouTube download</string>
     <string translatable="false" name="youtube_download_queued">Queued</string>
     <string translatable="false" name="youtube_download_waiting">Waiting for connection</string>

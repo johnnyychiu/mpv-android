@@ -17,7 +17,8 @@ data class ResolvedVideo(
     val title: String,
     val videoUrl: String,
     val audioUrl: String? = null,
-    val httpHeaders: Map<String, String> = emptyMap()
+    val httpHeaders: Map<String, String> = emptyMap(),
+    val httpChunkSize: Long? = null
 )
 
 /** All operations except cancel are blocking and must run off the main thread. */
@@ -37,6 +38,7 @@ object YouTubeEngine {
             if (initialized) return
             try {
                 YoutubeDL.getInstance().init(context.applicationContext)
+                BundledYouTubeTools.installIfNeeded(context.applicationContext)
                 FFmpeg.getInstance().init(context.applicationContext)
                 initialized = true
             } catch (error: Exception) {
@@ -50,30 +52,45 @@ object YouTubeEngine {
             val normalizedUrl = YouTubeMediaPolicy.videoUrl(url)
             initialize(context)
             session.checkCancelled()
-            val info = readInfo(normalizedUrl, "bestvideo+bestaudio/best", session)
-            val type = info.optString("_type")
-            require(type.isEmpty() || type == "video") { "This link does not identify a single video." }
-            val requestedFormats = info.optJSONArray("requested_formats")
-            val streams = if (requestedFormats != null && requestedFormats.length() > 0) {
-                (0 until requestedFormats.length()).map { requestedFormats.getJSONObject(it) }
-            } else listOf(info)
-            val video = streams.firstOrNull { hasCodec(it, "vcodec") }
-                ?: throw IllegalStateException("No playable video stream was found. Update the YouTube tools and try again.")
-            val audio = if (hasCodec(video, "acodec")) null else
-                streams.firstOrNull { hasCodec(it, "acodec") && !hasCodec(it, "vcodec") }
-                    ?: throw IllegalStateException("No playable audio stream was found. Update the YouTube tools and try again.")
-            val headers = linkedMapOf<String, String>()
-            readHeaders(info, headers)
-            readHeaders(video, headers)
-            audio?.let { readHeaders(it, headers) }
-            session.checkCancelled()
-            ResolvedVideo(
-                title = info.optString("title").ifBlank { "YouTube video" }.take(300),
-                videoUrl = playbackUrl(video),
-                audioUrl = audio?.let(::playbackUrl),
-                httpHeaders = YouTubeMediaPolicy.checkedHeaders(headers)
-            )
+            PlaybackFallbackPolicy.resolve(
+                primary = { parsePlaybackInfo(readInfo(normalizedUrl, "bestvideo+bestaudio/best", session)) },
+                fallback = {
+                    parsePlaybackInfo(readInfo(
+                        normalizedUrl, "best[protocol=https][vcodec!=none][acodec!=none]", session,
+                        androidClient = true
+                    ))
+                },
+                checkCancelled = session::checkCancelled
+            ).also { session.checkCancelled() }
         }
+
+    private fun parsePlaybackInfo(info: JSONObject): ResolvedVideo {
+        requirePublicVideo(info)
+        val requestedFormats = info.optJSONArray("requested_formats")
+        val streams = if (requestedFormats != null && requestedFormats.length() > 0) {
+            (0 until requestedFormats.length()).map { requestedFormats.getJSONObject(it) }
+        } else listOf(info)
+        val video = streams.firstOrNull { hasCodec(it, "vcodec") }
+            ?: throw IllegalStateException("No playable video stream was found. Update the YouTube tools and try again.")
+        val audio = if (hasCodec(video, "acodec")) null else
+            streams.firstOrNull { hasCodec(it, "acodec") && !hasCodec(it, "vcodec") }
+                ?: throw IllegalStateException("No playable audio stream was found. Update the YouTube tools and try again.")
+        val headers = linkedMapOf<String, String>()
+        readHeaders(info, headers)
+        readHeaders(video, headers)
+        audio?.let { readHeaders(it, headers) }
+        return ResolvedVideo(
+            title = info.optString("title").ifBlank { "YouTube video" }.take(300),
+            videoUrl = playbackUrl(video),
+            audioUrl = audio?.let(::playbackUrl),
+            httpHeaders = YouTubeMediaPolicy.checkedHeaders(headers),
+            httpChunkSize = YouTubeMediaPolicy.httpChunkSize(listOfNotNull(video, audio).map { stream ->
+                stream.optJSONObject("downloader_options")?.let { options ->
+                    if (options.isNull("http_chunk_size")) null else options.optString("http_chunk_size")
+                }
+            })
+        )
+    }
 
     /** Public uploads playlist, used when YouTube's RSS feed is unavailable. */
     fun recentUploads(context: Context, channelId: String, processId: String): ChannelFeed =
@@ -146,13 +163,21 @@ object YouTubeEngine {
             DownloadFormat.MP4 -> "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
             DownloadFormat.MP3 -> "bestaudio/best"
         }
-        val info = readInfo(normalizedUrl, selection, session)
+        val resolvedInfo = PlaybackFallbackPolicy.resolve(
+            primary = { DownloadInfo(readInfo(normalizedUrl, selection, session), androidClient = false) },
+            fallback = { DownloadInfo(readInfo(normalizedUrl, selection, session, androidClient = true), androidClient = true) },
+            checkCancelled = session::checkCancelled
+        )
+        val info = resolvedInfo.info
+        requirePublicVideo(info)
         val duration = info.optDouble("duration", Double.NaN)
         require(!info.optBoolean("is_live") && info.optString("live_status") !in
             setOf("is_live", "is_upcoming", "post_live") && duration.isFinite() && duration > 0) {
             "Download a finished video. Live streams, upcoming videos, and streams still being processed cannot be downloaded."
         }
         val request = baseRequest(normalizedUrl)
+            // The download must use the same client that successfully resolved its metadata.
+            .apply { if (resolvedInfo.androidClient) addOption("--extractor-args", "youtube:player_client=android") }
             .addOption("--format", selection)
             .addOption("--output", File(staging, "%(id)s.%(ext)s").absolutePath)
             .addOption("--restrict-filenames")
@@ -259,10 +284,22 @@ object YouTubeEngine {
     private fun restrictedAvailability(value: String): Boolean = value in
         setOf("private", "premium_only", "subscriber_only", "needs_auth", "unavailable")
 
-    private fun readInfo(url: String, format: String, session: Session): JSONObject {
+    private fun requirePublicVideo(info: JSONObject) {
+        val type = info.optString("_type")
+        require(type.isEmpty() || type == "video") { "This link does not identify a single video." }
+        require(!restrictedAvailability(info.optString("availability")) && info.optInt("age_limit", 0) < 18 &&
+            !info.optBoolean("has_drm")) {
+            "This video is not publicly available without age verification or signing in."
+        }
+    }
+
+    private data class DownloadInfo(val info: JSONObject, val androidClient: Boolean)
+
+    private fun readInfo(url: String, format: String, session: Session, androidClient: Boolean = false): JSONObject {
         session.checkCancelled()
         val request = baseRequest(url).addOption("--dump-single-json").addOption("--skip-download")
             .addOption("--format", format)
+            .apply { if (androidClient) addOption("--extractor-args", "youtube:player_client=android") }
         val response = YoutubeDL.getInstance().execute(request, processId = session.id, callback = null)
         session.checkCancelled()
         return try {

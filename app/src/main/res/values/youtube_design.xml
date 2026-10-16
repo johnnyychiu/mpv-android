@@ -62,6 +62,12 @@
         <item name="android:includeFontPadding">false</item>
     </style>
 
+    <style name="YouTubeOfflineToolbarTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">18sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
     <style name="YouTubeCompactButton" parent="Widget.Material3.Button">
         <item name="android:minHeight">48dp</item>
         <item name="android:minWidth">0dp</item>

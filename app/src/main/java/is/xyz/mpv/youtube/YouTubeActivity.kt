@@ -27,6 +27,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
 import androidx.core.os.BundleCompat
 import androidx.lifecycle.ViewModelProvider
@@ -55,6 +56,7 @@ import java.util.UUID
 
 class YouTubeActivity : AppCompatActivity() {
     private lateinit var model: YouTubeViewModel
+    private lateinit var offlineModel: OfflineLibraryViewModel
     private lateinit var videos: VideoAdapter
     private lateinit var channels: ChannelAdapter
     private lateinit var downloads: DownloadAdapter
@@ -74,6 +76,10 @@ class YouTubeActivity : AppCompatActivity() {
     private var incomingUrl: String? = null
     private var pendingDownload: PendingDownload? = null
     private var downloadInfos: List<WorkInfo> = emptyList()
+    private var downloadRows: List<DownloadRow> = emptyList()
+    private var offlineSnapshot = OfflineLibrarySnapshot()
+    private var lastOfflineError: String? = null
+    private var completedWork: List<String> = emptyList()
     private var displayedNotice: String? = null
     private var dismissedNotice: String? = null
     private val scrollStates = mutableMapOf<Section, Parcelable?>()
@@ -91,8 +97,9 @@ class YouTubeActivity : AppCompatActivity() {
         try {
             require(uri.scheme == "content")
             val flags = (result.data?.flags ?: 0) and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            require(flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0)
+            require(flags == (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
             contentResolver.takePersistableUriPermission(uri, flags)
+            require(contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission && it.isWritePermission })
         } catch (_: Exception) {
             model.showMessage(getString(R.string.youtube_download_grant_failed))
             return@registerForActivityResult
@@ -114,6 +121,7 @@ class YouTubeActivity : AppCompatActivity() {
         setSupportActionBar(findViewById<MaterialToolbar>(R.id.youtube_toolbar))
         supportActionBar?.setDisplayShowTitleEnabled(false)
         model = ViewModelProvider(this)[YouTubeViewModel::class.java]
+        offlineModel = ViewModelProvider(this)[OfflineLibraryViewModel::class.java]
         incomingUrl = intent.getStringExtra("youtube_url") ?: intent.dataString
         savedInstanceState?.let { saved ->
             section = runCatching { Section.valueOf(saved.getString("youtube_section").orEmpty()) }.getOrDefault(Section.FEED)
@@ -143,6 +151,7 @@ class YouTubeActivity : AppCompatActivity() {
             cancel = { WorkManager.getInstance(this).cancelWorkById(it) },
             open = ::openDownloadedFile,
             details = { showDetails(getString(R.string.youtube_downloads), it) },
+            addToPlaylist = { startActivity(Intent(this, OfflinePlaylistsActivity::class.java).putExtra(OfflinePlaylistsActivity.EXTRA_ADD_DOWNLOAD, it.id)) },
         )
         listOf(videos, channels, downloads).forEach { it.stateRestorationPolicy = RecyclerView.Adapter.StateRestorationPolicy.PREVENT_WHEN_EMPTY }
         val gap = resources.getDimensionPixelSize(R.dimen.youtube_grid_gap)
@@ -171,6 +180,7 @@ class YouTubeActivity : AppCompatActivity() {
         }
         noticeText.setOnClickListener { displayedNotice?.let { showDetails(getString(R.string.youtube_details), it) } }
         emptyLink.setOnClickListener { showVideoLink() }
+        findViewById<View>(R.id.youtube_playlists_button).setOnClickListener { openPlaylists() }
         model.state.observe(this) { state ->
             render(state)
             state.playback?.let { resolved ->
@@ -184,10 +194,21 @@ class YouTubeActivity : AppCompatActivity() {
                 else if (state.snapshot.subscriptions.isNotEmpty()) model.refresh()
             }
         }
+        offlineModel.state.observe(this) { state ->
+            offlineSnapshot = state.snapshot
+            renderDownloads()
+            if (state.error != null && state.error != lastOfflineError) model.showMessage(state.error)
+            lastOfflineError = state.error
+            (state.event as? OfflineLibraryEvent.Open)?.let { event ->
+                offlineModel.consumeEvent()
+                launchDownloadedFile(event.destination, event.title)
+            }
+        }
         WorkManager.getInstance(this).getWorkInfosByTagLiveData("youtube-download").observe(this) { infos ->
             downloadInfos = infos.orEmpty().sortedWith(compareBy<WorkInfo> { it.state.isFinished }.thenByDescending(::createdAt).thenBy { it.id.toString() })
-            downloads.submitList(downloadInfos)
-            renderSection(model.state.value ?: YouTubeUiState())
+            renderDownloads()
+            val completed = downloadInfos.filter { it.state == WorkInfo.State.SUCCEEDED }.map { it.id.toString() }.sorted()
+            if (completed != completedWork) { completedWork = completed; offlineModel.refresh(downloadInfos) }
             val active = downloadInfos.count { !it.state.isFinished }
             if (active > 0) tabs.getTabAt(Section.DOWNLOADS.ordinal)?.orCreateBadge?.apply {
                 number = active
@@ -195,6 +216,11 @@ class YouTubeActivity : AppCompatActivity() {
                 badgeTextColor = ContextCompat.getColor(this@YouTubeActivity, R.color.youtube_on_accent)
             } else tabs.getTabAt(Section.DOWNLOADS.ordinal)?.removeBadge()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        offlineModel.refresh(downloadInfos)
     }
 
     private fun bindViews() {
@@ -248,6 +274,7 @@ class YouTubeActivity : AppCompatActivity() {
         menu.add(0, MENU_LINK, 2, R.string.youtube_open_video).setIcon(R.drawable.youtube_ic_link).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
         menu.add(0, MENU_LOCAL, 3, R.string.youtube_local_media)
         menu.add(0, MENU_UPDATE, 4, R.string.youtube_update)
+        menu.add(0, MENU_PLAYLISTS, 5, R.string.youtube_playlists)
         return true
     }
 
@@ -267,10 +294,22 @@ class YouTubeActivity : AppCompatActivity() {
         MENU_LINK -> { showVideoLink(); true }
         MENU_LOCAL -> { startActivity(Intent(this, MainActivity::class.java)); true }
         MENU_UPDATE -> { model.updateEngine(); true }
+        MENU_PLAYLISTS -> { openPlaylists(); true }
         else -> super.onOptionsItemSelected(item)
     }
 
     private fun selectSection(value: Section) { tabs.getTabAt(value.ordinal)?.select() }
+
+    private fun openPlaylists() { startActivity(Intent(this, OfflinePlaylistsActivity::class.java)) }
+
+    private fun renderDownloads() {
+        val savedDestinations = offlineSnapshot.downloads.mapTo(mutableSetOf()) { it.destination }
+        val jobs = downloadInfos.filter { it.state != WorkInfo.State.SUCCEEDED || it.outputData.getString("destination") !in savedDestinations }
+        downloadRows = (jobs.map { DownloadRow(work = it) } + offlineSnapshot.downloads.map { DownloadRow(saved = it) })
+            .sortedWith(compareBy<DownloadRow> { it.work?.state?.isFinished != false }.thenByDescending { it.saved?.savedAt ?: it.work?.let(::createdAt) ?: 0L }.thenBy { it.key })
+        downloads.submitList(downloadRows)
+        renderSection(model.state.value ?: YouTubeUiState())
+    }
 
     private fun switchSection(value: Section) {
         if (content.adapter != null) scrollStates[section] = content.layoutManager?.onSaveInstanceState()
@@ -314,10 +353,11 @@ class YouTubeActivity : AppCompatActivity() {
         val isEmpty = when (section) {
             Section.FEED -> state.snapshot.videos.isEmpty()
             Section.CHANNELS -> !hasChannels
-            Section.DOWNLOADS -> downloadInfos.isEmpty()
+            Section.DOWNLOADS -> downloadRows.isEmpty()
         }
+        findViewById<View>(R.id.youtube_playlists_button).visibility = if (section == Section.DOWNLOADS) View.VISIBLE else View.GONE
         content.visibility = if (isEmpty) View.GONE else View.VISIBLE
-        empty.visibility = if (isEmpty && state.operation != YouTubeOperation.LOAD) View.VISIBLE else View.GONE
+        empty.visibility = if (isEmpty && state.operation != YouTubeOperation.LOAD && (section != Section.DOWNLOADS || offlineModel.state.value?.loaded == true)) View.VISIBLE else View.GONE
         emptyAction.isEnabled = idle
         emptyLink.isEnabled = canStartPlayback(state)
         emptyLink.visibility = View.VISIBLE
@@ -462,11 +502,16 @@ class YouTubeActivity : AppCompatActivity() {
                 putExtra("youtube_resolved", true)
                 video.audioUrl?.let { putExtra("youtube_audio_url", it) }
                 putExtra("youtube_http_headers", headers)
+                putExtra("youtube_http_chunk_size", video.httpChunkSize ?: 0L)
             })
         } catch (_: Exception) { model.showMessage(getString(R.string.youtube_play_failed)) }
     }
 
     private fun openDownloadedFile(destination: String, title: String) {
+        offlineModel.open(destination, title)
+    }
+
+    private fun launchDownloadedFile(destination: String, title: String) {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(destination), this, MPVActivity::class.java)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).putExtra("title", title))
@@ -483,6 +528,9 @@ class YouTubeActivity : AppCompatActivity() {
     private enum class Section { FEED, CHANNELS, DOWNLOADS }
     private data class PendingDownload(val url: String, val title: String, val format: DownloadFormat)
     private data class ChannelRow(val subscription: YouTubeSubscription, val uploads: Int)
+    private data class DownloadRow(val work: WorkInfo? = null, val saved: OfflineDownload? = null) {
+        val key: String get() = saved?.let { "saved:${it.id}" } ?: "work:${work?.id}"
+    }
 
     private class VideoAdapter(val play: (YouTubeVideo) -> Unit, val download: (YouTubeVideo, DownloadFormat) -> Unit) :
         ListAdapter<YouTubeVideo, VideoAdapter.Holder>(object : DiffUtil.ItemCallback<YouTubeVideo>() {
@@ -560,47 +608,48 @@ class YouTubeActivity : AppCompatActivity() {
         }
     }
 
-    private class DownloadAdapter(val cancel: (UUID) -> Unit, val open: (String, String) -> Unit, val details: (String) -> Unit) :
-        ListAdapter<WorkInfo, DownloadAdapter.Holder>(object : DiffUtil.ItemCallback<WorkInfo>() {
-            override fun areItemsTheSame(oldItem: WorkInfo, newItem: WorkInfo) = oldItem.id == newItem.id
-            override fun areContentsTheSame(oldItem: WorkInfo, newItem: WorkInfo) = oldItem == newItem
+    private class DownloadAdapter(val cancel: (UUID) -> Unit, val open: (String, String) -> Unit, val details: (String) -> Unit, val addToPlaylist: (OfflineDownload) -> Unit) :
+        ListAdapter<DownloadRow, DownloadAdapter.Holder>(object : DiffUtil.ItemCallback<DownloadRow>() {
+            override fun areItemsTheSame(oldItem: DownloadRow, newItem: DownloadRow) = oldItem.key == newItem.key
+            override fun areContentsTheSame(oldItem: DownloadRow, newItem: DownloadRow) = oldItem == newItem
         }) {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(LayoutInflater.from(parent.context).inflate(R.layout.youtube_download_row, parent, false))
         override fun onBindViewHolder(holder: Holder, position: Int) {
-            val info = getItem(position)
+            val row = getItem(position)
+            val info = row.work
+            val saved = row.saved
             val context = holder.itemView.context
-            val title = info.outputData.getString("title") ?: info.progress.getString("title") ?: context.getString(R.string.youtube_download_generic)
-            val format = info.tags.firstOrNull { it.startsWith("youtube-format:") }?.removePrefix("youtube-format:")?.takeIf { it == "MP4" || it == "MP3" }
+            val title = saved?.title ?: info?.outputData?.getString("title") ?: info?.progress?.getString("title") ?: context.getString(R.string.youtube_download_generic)
+            val format = saved?.format?.name ?: info?.tags?.firstOrNull { it.startsWith("youtube-format:") }?.removePrefix("youtube-format:")?.takeIf { it == "MP4" || it == "MP3" }
             holder.title.text = title
             holder.format.text = format.orEmpty()
             holder.format.visibility = if (format == null) View.GONE else View.VISIBLE
-            val timestamp = createdAt(info)
-            holder.created.visibility = if (timestamp > 0) View.VISIBLE else View.GONE
-            holder.created.text = if (timestamp > 0) DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp)) else ""
-            val percent = info.progress.getInt("percent", -1).coerceIn(-1, 100)
-            val status = when (info.state) {
+            holder.created.visibility = View.GONE
+            val percent = (info?.progress?.getInt("percent", -1) ?: -1).coerceIn(-1, 100)
+            val state = info?.state ?: WorkInfo.State.SUCCEEDED
+            val status = when (state) {
                 WorkInfo.State.ENQUEUED -> context.getString(R.string.youtube_download_queued)
                 WorkInfo.State.BLOCKED -> context.getString(R.string.youtube_download_waiting)
                 WorkInfo.State.RUNNING -> {
-                    val label = info.progress.getString("status") ?: context.getString(R.string.youtube_download_running)
+                    val label = info?.progress?.getString("status") ?: context.getString(R.string.youtube_download_running)
                     if (percent >= 0) context.getString(R.string.youtube_download_progress, label, percent) else label
                 }
                 WorkInfo.State.SUCCEEDED -> context.getString(R.string.youtube_download_complete)
                 WorkInfo.State.CANCELLED -> context.getString(R.string.youtube_download_cancelled)
-                WorkInfo.State.FAILED -> context.getString(R.string.youtube_download_failed, presentError(context, info.outputData.getString("error") ?: context.getString(R.string.youtube_download_unknown_error)))
+                WorkInfo.State.FAILED -> context.getString(R.string.youtube_download_failed, presentError(context, info?.outputData?.getString("error") ?: context.getString(R.string.youtube_download_unknown_error)))
             }
             holder.status.text = status
-            holder.status.setTextColor(ContextCompat.getColor(context, when (info.state) {
+            holder.status.setTextColor(ContextCompat.getColor(context, when (state) {
                 WorkInfo.State.SUCCEEDED -> R.color.youtube_success
                 WorkInfo.State.FAILED -> R.color.youtube_error
                 else -> R.color.youtube_text_secondary
             }))
-            holder.progress.visibility = if (info.state.isFinished) View.GONE else View.VISIBLE
-            holder.progress.isIndeterminate = !info.state.isFinished && (percent < 0 || info.state != WorkInfo.State.RUNNING)
+            holder.progress.visibility = if (state.isFinished) View.GONE else View.VISIBLE
+            holder.progress.isIndeterminate = !state.isFinished && (percent < 0 || state != WorkInfo.State.RUNNING)
             if (!holder.progress.isIndeterminate) holder.progress.setProgressCompat(percent.coerceAtLeast(0), false)
-            val destination = info.outputData.getString("destination")
-            holder.action.visibility = if (!info.state.isFinished || (info.state == WorkInfo.State.SUCCEEDED && destination != null)) View.VISIBLE else View.GONE
-            if (!info.state.isFinished) {
+            val destination = saved?.destination ?: info?.outputData?.getString("destination")
+            holder.action.visibility = if (!state.isFinished || (state == WorkInfo.State.SUCCEEDED && destination != null)) View.VISIBLE else View.GONE
+            if (!state.isFinished && info != null) {
                 holder.action.setText(android.R.string.cancel)
                 holder.action.contentDescription = context.getString(R.string.youtube_cancel_download, title)
                 holder.action.setOnClickListener { cancel(info.id) }
@@ -609,7 +658,15 @@ class YouTubeActivity : AppCompatActivity() {
                 holder.action.contentDescription = context.getString(R.string.youtube_open_download, title)
                 holder.action.setOnClickListener { destination?.let { open(it, title) } }
             }
-            holder.itemView.setOnClickListener(if (info.state == WorkInfo.State.FAILED) View.OnClickListener { details(status) } else null)
+            holder.more.visibility = if (saved != null) View.VISIBLE else View.GONE
+            holder.more.contentDescription = context.getString(R.string.youtube_offline_options, title)
+            holder.more.setOnClickListener { anchor ->
+                if (saved != null) PopupMenu(context, anchor).apply {
+                    menu.add(R.string.youtube_offline_add_to_playlist)
+                    setOnMenuItemClickListener { addToPlaylist(saved); true }
+                }.show()
+            }
+            holder.itemView.setOnClickListener(if (state == WorkInfo.State.FAILED) View.OnClickListener { details(status) } else null)
         }
         class Holder(view: View) : RecyclerView.ViewHolder(view) {
             val title: TextView = view.findViewById(R.id.youtube_download_title)
@@ -618,6 +675,7 @@ class YouTubeActivity : AppCompatActivity() {
             val status: TextView = view.findViewById(R.id.youtube_download_status)
             val progress: LinearProgressIndicator = view.findViewById(R.id.youtube_download_progress)
             val action: MaterialButton = view.findViewById(R.id.youtube_download_action)
+            val more: ImageButton = view.findViewById(R.id.youtube_download_more)
         }
     }
 
@@ -627,6 +685,7 @@ class YouTubeActivity : AppCompatActivity() {
         const val MENU_LINK = 103
         const val MENU_LOCAL = 104
         const val MENU_UPDATE = 105
+        const val MENU_PLAYLISTS = 106
         val REQUEST_LIMIT_ERROR = Regex("""\bHTTP(?:\s+(?:Error|status(?:\s+code)?))?\s*:?\s*429\b|\bsign\s+in\s+to\s+confirm(?:\s+that)?\s+you(?:['’]re|\s+are)\s+not\s+a\s+bot\b""", RegexOption.IGNORE_CASE)
         fun presentError(context: Context, message: String): String =
             if (!message.startsWith("Could not update the YouTube tools.") && REQUEST_LIMIT_ERROR.containsMatchIn(message)) {

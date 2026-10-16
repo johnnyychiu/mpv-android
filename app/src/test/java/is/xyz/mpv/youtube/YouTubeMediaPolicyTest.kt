@@ -73,6 +73,22 @@ class YouTubeMediaPolicyTest {
         assertEquals("audio/mpeg", DownloadFormat.MP3.mimeType)
     }
 
+    @Test fun httpRequestLimitUsesSmallestSelectedStreamRequirement() {
+        assertEquals(10485760L, YouTubeMediaPolicy.httpChunkSize(listOf("10485760", "10485760")))
+        assertEquals(4096L, YouTubeMediaPolicy.httpChunkSize(listOf(null, "10485760", "4096")))
+        assertEquals(null, YouTubeMediaPolicy.httpChunkSize(listOf(null, "0")))
+        assertEquals(null, YouTubeMediaPolicy.httpChunkSize(emptyList()))
+    }
+
+    @Test fun rejectsUnboundedOrMalformedHttpRequestLimits() {
+        listOf("-1", "1", "1023", "67108865", Long.MAX_VALUE.toString(), "1.5", "NaN", "", "10M", "1,pause=yes")
+            .forEach { value ->
+                assertThrows(value, IllegalArgumentException::class.java) {
+                    YouTubeMediaPolicy.httpChunkSize(listOf(value))
+                }
+            }
+    }
+
     @Test fun uploadsUrlsAreRestrictedToCanonicalPublicChannelPlaylists() {
         assertEquals("https://www.youtube.com/playlist?list=UUsBjURrPoezykLs9EqgamOA",
             YouTubeMediaPolicy.uploadsUrl("UCsBjURrPoezykLs9EqgamOA"))

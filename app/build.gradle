@@ -1,5 +1,64 @@
 apply plugin: 'com.android.application'
 
+def bundledYtDlpVersion = '2026.08.19'
+def bundledYtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/download/${bundledYtDlpVersion}/yt-dlp"
+def bundledYtDlpSha256 = '1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6'
+def bundledYtDlpSize = 3072469L
+def bundledYtDlpAssetsDir = layout.buildDirectory.dir('generated/ytDlpAssets')
+def offlineBuild = gradle.startParameter.offline
+
+// Keep the executable out of Git. Only APK asset merging requires this download;
+// compiling and running pure unit tests does not fetch the runtime.
+def prepareBundledYtDlp = tasks.register('prepareBundledYtDlp') {
+    inputs.property('version', bundledYtDlpVersion)
+    inputs.property('url', bundledYtDlpUrl)
+    inputs.property('sha256', bundledYtDlpSha256)
+    inputs.property('size', bundledYtDlpSize)
+    outputs.dir(bundledYtDlpAssetsDir)
+    doLast {
+        def target = bundledYtDlpAssetsDir.get().file('yt-dlp/yt-dlp').asFile
+        def verified = { File file ->
+            if (!file.isFile() || file.length() != bundledYtDlpSize) return false
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            file.withInputStream { input ->
+                byte[] buffer = new byte[65536]
+                int count
+                while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count)
+            }
+            digest.digest().encodeHex().toString() == bundledYtDlpSha256
+        }
+        if (verified(target)) return
+        if (offlineBuild) {
+            throw new GradleException('The pinned yt-dlp asset is missing or invalid. Run prepareBundledYtDlp once with network access before an offline APK build.')
+        }
+        java.nio.file.Files.createDirectories(target.parentFile.toPath())
+        def temporary = java.nio.file.Files.createTempFile(target.parentFile.toPath(), '.yt-dlp-', '.download')
+        try {
+            def connection = new URI(bundledYtDlpUrl).toURL().openConnection()
+            connection.connectTimeout = 30000
+            connection.readTimeout = 60000
+            connection.setRequestProperty('User-Agent', 'mpv-android-ytdlp-build')
+            connection.inputStream.withCloseable { input ->
+                java.nio.file.Files.newOutputStream(temporary).withCloseable { output ->
+                    byte[] buffer = new byte[65536]
+                    long total = 0
+                    int count
+                    while ((count = input.read(buffer)) != -1) {
+                        total += count
+                        if (total > bundledYtDlpSize) throw new GradleException('The yt-dlp download exceeds its pinned size.')
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            if (!verified(temporary.toFile())) throw new GradleException('The yt-dlp download does not match the pinned size and SHA-256.')
+            java.nio.file.Files.move(temporary, target.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            java.nio.file.Files.deleteIfExists(temporary)
+        }
+    }
+}
+
 ext.abiCodes = ["armeabi-v7a": 1, "arm64-v8a": 2, "x86":3, "x86_64":4]
 ext.universalBase = 8000
 
@@ -18,8 +77,11 @@ android {
         minSdkVersion 24
         targetSdk 36
 
-        versionCode 49
-        versionName "2026-10-16-youtube.2"
+        versionCode 50
+        versionName "2026-10-16-youtube.3"
+        buildConfigField 'String', 'YT_DLP_BUNDLED_VERSION', "\"${bundledYtDlpVersion}\""
+        buildConfigField 'String', 'YT_DLP_BUNDLED_SHA256', "\"${bundledYtDlpSha256}\""
+        buildConfigField 'long', 'YT_DLP_BUNDLED_SIZE', "${bundledYtDlpSize}L"
 
         ndk {
             abiFilters.addAll(mpvAbis)
@@ -54,6 +116,7 @@ android {
 
     // Also works on Windows checkouts where the jniLibs symlink is a text file.
     sourceSets.main.jniLibs.srcDirs = ['src/main/libs']
+    sourceSets.main.assets.srcDir(bundledYtDlpAssetsDir.get().asFile)
 
     packaging {
         jniLibs {
@@ -97,6 +160,10 @@ def verifyMpvNativeLibraries = tasks.register('verifyMpvNativeLibraries') {
 tasks.configureEach {
     if (name.startsWith('merge') && name.endsWith('NativeLibs')) {
         dependsOn(verifyMpvNativeLibraries)
+    }
+    // Lint also reads source-set assets directly when generating/analyzing its model.
+    if ((name.startsWith('merge') && name.endsWith('Assets')) || name.toLowerCase(Locale.ROOT).contains('lint')) {
+        dependsOn(prepareBundledYtDlp)
     }
 }
 

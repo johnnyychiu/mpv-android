@@ -238,6 +238,12 @@
             android:exported="false" />
 
         <activity
+            android:name=".youtube.OfflinePlaylistsActivity"
+            android:theme="@style/YouTubeTheme"
+            android:label="@string/youtube_playlists"
+            android:exported="false" />
+
+        <activity
             android:name=".preferences.PreferenceActivity"
             android:theme="@style/AppTheme.Preference"
             android:parentActivityName=".MainActivity"

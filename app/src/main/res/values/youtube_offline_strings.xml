@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="youtube_playlists" translatable="false">Playlists</string>
+    <string name="youtube_offline_new_playlist" translatable="false">New playlist</string>
+    <string name="youtube_offline_playlist_name" translatable="false">Playlist name</string>
+    <string name="youtube_offline_rename" translatable="false">Rename</string>
+    <string name="youtube_offline_delete" translatable="false">Delete playlist</string>
+    <string name="youtube_offline_delete_message" translatable="false">Delete “%1$s”? Saved files will stay on your device.</string>
+    <string name="youtube_offline_name_invalid" translatable="false">Use 1–%1$d characters without line breaks.</string>
+    <string name="youtube_offline_add_to_playlist" translatable="false">Add to playlist</string>
+    <string name="youtube_offline_add_downloads" translatable="false">Add saved files</string>
+    <string name="youtube_offline_play_all" translatable="false">Play all</string>
+    <string name="youtube_offline_import" translatable="false">Import MP4 / MP3 files</string>
+    <string name="youtube_offline_no_playlists" translatable="false">No playlists yet</string>
+    <string name="youtube_offline_no_files" translatable="false">No files yet</string>
+    <string name="youtube_offline_move_up" translatable="false">Move up</string>
+    <string name="youtube_offline_move_down" translatable="false">Move down</string>
+    <string name="youtube_offline_remove" translatable="false">Remove from playlist</string>
+    <string name="youtube_offline_options" translatable="false">Options for %1$s</string>
+    <string name="youtube_offline_added" translatable="false">Added to playlist</string>
+    <string name="youtube_offline_all_added" translatable="false">All saved files are already in this playlist.</string>
+    <string name="youtube_offline_selection_limit" translatable="false">Choose up to %1$d files.</string>
+    <string name="youtube_offline_load_failed" translatable="false">Could not open your saved library. Try again.</string>
+    <string name="youtube_offline_import_limit" translatable="false">Choose up to %1$d files at a time.</string>
+    <string name="youtube_offline_read_grant_failed" translatable="false">This location does not provide lasting read access. Choose another location.</string>
+    <string name="youtube_offline_import_failed" translatable="false">Could not import this file. Check its saved location.</string>
+    <string name="youtube_offline_import_partial" translatable="false">Could not import %1$d file(s). %2$s</string>
+    <string name="youtube_offline_unsupported_file" translatable="false">“%1$s” is not an MP4 or MP3 file.</string>
+    <string name="youtube_offline_empty_file" translatable="false">“%1$s” is empty. Choose a completed download.</string>
+    <string name="youtube_offline_playlist_unavailable" translatable="false">This playlist is no longer available.</string>
+    <string name="youtube_offline_playlist_empty" translatable="false">Add saved files to this playlist before playing it.</string>
+    <string name="youtube_offline_file_unavailable" translatable="false">“%1$s” is unavailable. Check its saved location or import the file again.</string>
+    <string name="youtube_offline_playback_failed" translatable="false">Could not open this playlist. %1$s</string>
+    <plurals name="youtube_offline_file_count" translatable="false">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+    <plurals name="youtube_offline_imported_count" translatable="false">
+        <item quantity="one">Imported %d file</item>
+        <item quantity="other">Imported %d files</item>
+    </plurals>
+</resources>

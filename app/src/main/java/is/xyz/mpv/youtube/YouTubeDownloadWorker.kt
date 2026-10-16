@@ -19,6 +19,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import java.io.File
 import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.CancellationException
@@ -42,7 +43,7 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
             val url = inputData.getString("url") ?: error("The video link is missing.")
             val format = DownloadFormat.valueOf(inputData.getString("format") ?: error("The download format is missing."))
             val destination = Uri.parse(inputData.getString("destination") ?: error("The save location is missing."))
-            require(destination.scheme == "content" && !destination.authority.isNullOrBlank()) { "Choose a document save location." }
+            OfflineLibraryPolicy.destination(destination.toString())
             createNotificationChannel()
             setForegroundAsync(foregroundInfo(0, "Preparing download")).get()
             reportProgress(0, "Preparing download", force = true)
@@ -56,6 +57,15 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
             reportProgress(99, "Saving to the selected location", force = true)
             copyToDocument(completedFile, destination)
             ensureActive()
+            // Only publish fully copied, closed documents. This survives WorkManager
+            // history pruning and remains idempotent if a completed job is retried.
+            try {
+                OfflineLibraryRepository(applicationContext).record(
+                    OfflineDownload(id.toString(), destination.toString(), title, format, System.currentTimeMillis())
+                )
+            } catch (error: Exception) {
+                throw IOException("The file was saved, but could not be added to the offline library: ${error.message.orEmpty()}", error)
+            }
             setProgressAsync(workDataOf("percent" to 100, "status" to "Saved", "title" to title)).get()
             Result.success(workDataOf("destination" to destination.toString(), "title" to title))
         } catch (error: Exception) {
@@ -164,9 +174,7 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
 
         fun enqueue(context: Context, url: String, title: String, format: DownloadFormat, destination: Uri): UUID {
             val normalizedUrl = YouTubeMediaPolicy.videoUrl(url)
-            require(destination.scheme == "content" && !destination.authority.isNullOrBlank() && destination.toString().length <= 4096) {
-                "Choose a document save location."
-            }
+            OfflineLibraryPolicy.destination(destination.toString())
             val request = OneTimeWorkRequestBuilder<YouTubeDownloadWorker>()
                 .setInputData(workDataOf("url" to normalizedUrl, "title" to title.take(300), "format" to format.name,
                     "destination" to destination.toString()))

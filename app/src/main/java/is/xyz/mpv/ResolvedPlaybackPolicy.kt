@@ -11,7 +11,8 @@ internal object ResolvedPlaybackPolicy {
         videoUrl: String,
         audioUrl: String?,
         title: String?,
-        headers: Map<String, String>
+        headers: Map<String, String>,
+        httpChunkSize: Long? = null
     ): String {
         requireMediaUrl(videoUrl)
         audioUrl?.let(::requireMediaUrl)
@@ -42,6 +43,13 @@ internal object ResolvedPlaybackPolicy {
             // Override optional user config for this file; mpv restores it afterwards.
             "audio-files" to ""
         )
+        if (httpChunkSize != null) {
+            require(httpChunkSize in 1024L..(64L * 1024 * 1024)) { "Invalid HTTP request size" }
+            // yt-dlp marks YouTube streams that require bounded Range requests.
+            // Match mpv's own ytdl_hook for both native curl and libavformat paths.
+            options["curl-max-request-size"] = httpChunkSize.toString()
+            options["stream-lavf-o"] = "request_size=$httpChunkSize"
+        }
         if (audioUrl != null) {
             // This suffix accepts a single URL without interpreting ':' as a list separator.
             options["audio-files-append"] = audioUrl

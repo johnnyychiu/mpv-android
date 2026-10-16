@@ -97,6 +97,17 @@ internal object YouTubeMediaPolicy {
         }.toMap()
     }
 
+    /** Match mpv's yt-dlp hook: honor the smallest request limit across selected streams. */
+    fun httpChunkSize(values: Iterable<String?>): Long? = values.mapNotNull { value ->
+        if (value == null) return@mapNotNull null
+        val bytes = value.toLongOrNull()
+        if (bytes == 0L) return@mapNotNull null
+        require(bytes != null && bytes in 1024L..(64L * 1024 * 1024)) {
+            "YouTube returned an unsupported HTTP request size. Update the YouTube tools and try again."
+        }
+        bytes
+    }.minOrNull()
+
     fun processId(input: String): String {
         require(input.matches(Regex("[A-Za-z0-9_-]{1,128}"))) { "Invalid YouTube operation ID." }
         return input

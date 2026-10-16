@@ -25,6 +25,26 @@ class ResolvedPlaybackPolicyTest {
         assertTrue(options.endsWith(",aid=%4%auto"))
     }
 
+    @Test fun passesBoundedRequestSizeToBothNativeTransports() {
+        val options = parseUtf8Options(ResolvedPlaybackPolicy.options(
+            video, "https://r2.googlevideo.com/audio", "Example", emptyMap(), 10485760L
+        ))
+        assertEquals("10485760", options["curl-max-request-size"])
+        assertEquals("request_size=10485760", options["stream-lavf-o"])
+        assertEquals("https://r2.googlevideo.com/audio", options["audio-files-append"])
+        val withoutLimit = parseUtf8Options(ResolvedPlaybackPolicy.options(video, null, null, emptyMap()))
+        assertFalse(withoutLimit.containsKey("curl-max-request-size"))
+        assertFalse(withoutLimit.containsKey("stream-lavf-o"))
+    }
+
+    @Test fun rejectsHttpRequestLimitsOutsideTheSupportedRange() {
+        listOf(Long.MIN_VALUE, -1L, 0L, 1023L, 67108865L, Long.MAX_VALUE).forEach { bytes ->
+            assertThrows(IllegalArgumentException::class.java) {
+                ResolvedPlaybackPolicy.options(video, null, null, emptyMap(), bytes)
+            }
+        }
+    }
+
     @Test fun rejectsNonYouTubeMediaAndUnsafeAuthorities() {
         listOf(
             "http://r1.googlevideo.com/video",
