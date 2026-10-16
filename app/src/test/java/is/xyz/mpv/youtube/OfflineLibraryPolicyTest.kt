@@ -14,14 +14,16 @@ class OfflineLibraryPolicyTest {
         val firstSave = OfflineLibraryPolicy.record(OfflineLibrarySnapshot(), first)
         assertEquals(firstSave, OfflineLibraryPolicy.record(firstSave, first))
         val repeatedImport = first.copy(id = id(99))
-        assertEquals(firstSave, OfflineLibraryPolicy.record(firstSave, repeatedImport))
+        val withAlias = OfflineLibraryPolicy.record(firstSave, repeatedImport)
+        assertEquals(listOf(id(99)), withAlias.downloads.single().sourceIds)
+        assertEquals(withAlias, OfflineLibraryPolicy.record(withAlias, repeatedImport))
     }
 
     @Test fun duplicateDocumentPreservesItsIdentifierAndPlaylistReferences() {
         val initial = playlist(listOf(first), listOf(first.id))
         val newer = first.copy(id = id(99), title = "Renamed document", savedAt = 200)
         val result = OfflineLibraryPolicy.record(initial, newer)
-        assertEquals(listOf(newer.copy(id = first.id)), result.downloads)
+        assertEquals(listOf(newer.copy(id = first.id, sourceIds = listOf(id(99)))), result.downloads)
         assertEquals(initial.playlists, result.playlists)
         assertEquals(result, OfflineLibraryPolicy.record(result, first))
     }
@@ -29,7 +31,7 @@ class OfflineLibraryPolicyTest {
     @Test fun conflictingWorkerIdentifierDoesNotReplaceAnotherDocument() {
         val initial = OfflineLibrarySnapshot(listOf(first))
         assertThrows(IllegalArgumentException::class.java) {
-            OfflineLibraryPolicy.record(initial, second.copy(id = first.id))
+            OfflineLibraryPolicy.record(initial, second.copy(id = first.id, savedAt = 200))
         }
         assertEquals(listOf(first), initial.downloads)
     }
@@ -150,6 +152,84 @@ class OfflineLibraryPolicyTest {
         assertEquals("小薯茄 😀 音樂", cleaned.downloads.single().title)
         val blank = OfflineLibraryPolicy.record(OfflineLibrarySnapshot(), first.copy(title = "\n\r"))
         assertEquals("Saved media", blank.downloads.single().title)
+    }
+
+    @Test fun renamingADocumentKeepsPlaylistReferencesDateFormatAndArtwork() {
+        val original = first.copy(videoId = "8Pae6Wy1abE", sourceIds = listOf(id(99)))
+        val initial = playlist(listOf(original, second), listOf(second.id, original.id))
+        val result = OfflineLibraryPolicy.renameDownload(initial, original.id, " 小薯茄 😀.mp4 ", "content://provider/document/renamed")
+        assertEquals(original.copy(title = "小薯茄 😀.mp4", destination = "content://provider/document/renamed", userRenamed = true), result.downloads.first())
+        assertEquals(second, result.downloads.last())
+        assertEquals(initial.playlists, result.playlists)
+    }
+
+    @Test fun renamedFilesIgnoreNewerWorkerNamesEvenWhenProviderKeepsTheSameUri() {
+        val renamed = OfflineLibraryPolicy.renameDownload(OfflineLibrarySnapshot(listOf(first)), first.id, "My title.mp4", first.destination)
+        assertEquals(renamed, OfflineLibraryPolicy.record(renamed, first.copy(title = "Old worker name", savedAt = 999)))
+    }
+
+    @Test fun olderWorkerMetadataCannotRestoreADifferentDestination() {
+        val initial = OfflineLibrarySnapshot(listOf(first))
+        listOf(99L, 100L).forEach { oldDate ->
+            assertEquals(initial, OfflineLibraryPolicy.record(initial, first.copy(destination = "content://provider/document/old", savedAt = oldDate)))
+        }
+    }
+
+    @Test fun importedFirstWorkerAliasCannotReintroduceOldUriAfterRename() {
+        val worker = first.copy(id = id(99), videoId = "8Pae6Wy1abE")
+        val aliased = OfflineLibraryPolicy.record(playlist(listOf(first), listOf(first.id)), worker)
+        val renamed = OfflineLibraryPolicy.renameDownload(aliased, first.id, "Saved title.mp4", "content://provider/document/new")
+        val backfilled = OfflineLibraryPolicy.record(renamed, worker.copy(savedAt = 999))
+        assertEquals(renamed, backfilled)
+        assertEquals(1, backfilled.downloads.size)
+        assertEquals(listOf(id(99)), backfilled.downloads.single().sourceIds)
+        assertEquals("8Pae6Wy1abE", backfilled.downloads.single().videoId)
+    }
+
+    @Test fun optionalMetadataDefaultsKeepOlderRecordsValidAndImportsPreserveKnownArtwork() {
+        assertNull(first.videoId)
+        assertFalse(first.userRenamed)
+        assertTrue(first.sourceIds.isEmpty())
+        assertEquals(first, OfflineLibraryPolicy.validate(OfflineLibrarySnapshot(listOf(first))).downloads.single())
+        val known = first.copy(videoId = "8Pae6Wy1abE")
+        val importedAgain = OfflineLibraryPolicy.record(OfflineLibrarySnapshot(listOf(known)), first.copy(id = id(99), savedAt = 200))
+        assertEquals("8Pae6Wy1abE", importedAgain.downloads.single().videoId)
+        assertEquals(first.id, importedAgain.downloads.single().id)
+    }
+
+    @Test fun legacyVideoIdRecoveryOnlyAcceptsTheExactFormerPlaceholderTitle() {
+        assertEquals("8Pae6Wy1abE", OfflineLibraryPolicy.legacyVideoId("YouTube 8Pae6Wy1abE"))
+        listOf("8Pae6Wy1abE", "youtube 8Pae6Wy1abE", " YouTube 8Pae6Wy1abE", "YouTube 8Pae6Wy1abE ",
+            "YouTube 8Pae6Wy1abE.mp4", "YouTube 8Pae6Wy1abE\n", "My YouTube 8Pae6Wy1abE", "YouTube ../bad").forEach {
+            assertNull(OfflineLibraryPolicy.legacyVideoId(it))
+        }
+    }
+
+    @Test fun videoIdsAndAliasesRejectPathInjectionDuplicateOwnershipAndExcessHistory() {
+        listOf("", "../8Pae6Wy1abE", "8Pae6Wy1abE/", "8Pae6Wy1ab\n", "https://i.ytimg.com/a").forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) { OfflineLibraryPolicy.videoId(invalid) }
+        }
+        assertEquals("_gDMltq-VoI", OfflineLibraryPolicy.videoId("_gDMltq-VoI"))
+        listOf(
+            listOf(first.copy(sourceIds = listOf(first.id))),
+            listOf(first.copy(sourceIds = listOf(id(99), id(99)))),
+            listOf(first.copy(sourceIds = listOf("invalid"))),
+            listOf(first.copy(sourceIds = listOf(second.id)), second),
+            listOf(first.copy(sourceIds = listOf(id(99))), second.copy(sourceIds = listOf(id(99)))),
+            listOf(first.copy(sourceIds = (1000..1000 + OfflineLibraryPolicy.MAX_SOURCE_IDS).map(::id)))
+        ).forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) { OfflineLibraryPolicy.validate(OfflineLibrarySnapshot(invalid)) }
+        }
+    }
+
+    @Test fun renameRejectsUnknownFilesUnsafeAddressesAndDestinationCollisions() {
+        val initial = OfflineLibrarySnapshot(listOf(first, second))
+        assertThrows(IllegalArgumentException::class.java) { OfflineLibraryPolicy.renameDownload(initial, id(99), "Name.mp4", first.destination) }
+        assertThrows(IllegalArgumentException::class.java) { OfflineLibraryPolicy.renameDownload(initial, first.id, "Name.mp4", second.destination) }
+        assertThrows(IllegalArgumentException::class.java) { OfflineLibraryPolicy.renameDownload(initial, first.id, "Name.mp4", "file:///tmp/video.mp4") }
+        listOf("", "bad\nname", "a".repeat(OfflineLibraryPolicy.MAX_TITLE_CHARS + 1)).forEach { name ->
+            assertThrows(IllegalArgumentException::class.java) { OfflineLibraryPolicy.renameDownload(initial, first.id, name, first.destination) }
+        }
     }
 
     private fun playlist(downloads: List<OfflineDownload>, ids: List<String>) =

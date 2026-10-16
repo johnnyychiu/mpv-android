@@ -24,4 +24,13 @@ class YouTubeThumbnailView @JvmOverloads constructor(context: Context, attrs: At
             fallback(R.drawable.youtube_thumbnail_placeholder)
         }
     }
+
+    /** Saved rows only read app-private artwork. They never fall back to a remote URL. */
+    fun showSavedVideo(videoId: String?) {
+        load(OfflineThumbnailStore(context).file(videoId)) {
+            placeholder(R.drawable.youtube_thumbnail_placeholder)
+            error(R.drawable.youtube_thumbnail_placeholder)
+            fallback(R.drawable.youtube_thumbnail_placeholder)
+        }
+    }
 }

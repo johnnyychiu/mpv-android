@@ -4,6 +4,14 @@
     <string name="youtube_offline_new_playlist" translatable="false">New playlist</string>
     <string name="youtube_offline_playlist_name" translatable="false">Playlist name</string>
     <string name="youtube_offline_rename" translatable="false">Rename</string>
+    <string name="youtube_offline_rename_file" translatable="false">Rename file</string>
+    <string name="youtube_offline_filename" translatable="false">File name</string>
+    <string name="youtube_offline_filename_invalid" translatable="false">Enter a file name without line breaks.</string>
+    <string name="youtube_offline_rename_unsupported" translatable="false">This saved location does not allow renaming. Try your files app.</string>
+    <string name="youtube_offline_rename_failed" translatable="false">Could not rename this file. Check that its saved location allows editing.</string>
+    <string name="youtube_offline_rename_access_lost" translatable="false">Renamed to “%1$s”, but lasting access could not be retained. Import the file again.</string>
+    <string name="youtube_offline_rename_restored" translatable="false">Could not update the library. The original file name was restored.</string>
+    <string name="youtube_offline_rename_recovery" translatable="false">The file moved, but the library could not update. Import it again. File location: %1$s</string>
     <string name="youtube_offline_delete" translatable="false">Delete playlist</string>
     <string name="youtube_offline_delete_message" translatable="false">Delete “%1$s”? Saved files will stay on your device.</string>
     <string name="youtube_offline_name_invalid" translatable="false">Use 1–%1$d characters without line breaks.</string>

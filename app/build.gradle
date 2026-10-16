@@ -77,8 +77,8 @@ android {
         minSdkVersion 24
         targetSdk 36
 
-        versionCode 50
-        versionName "2026-10-16-youtube.3"
+        versionCode 51
+        versionName "2026-10-16-youtube.4"
         buildConfigField 'String', 'YT_DLP_BUNDLED_VERSION', "\"${bundledYtDlpVersion}\""
         buildConfigField 'String', 'YT_DLP_BUNDLED_SHA256', "\"${bundledYtDlpSha256}\""
         buildConfigField 'long', 'YT_DLP_BUNDLED_SIZE', "${bundledYtDlpSize}L"

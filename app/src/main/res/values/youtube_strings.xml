@@ -35,6 +35,7 @@
     <string translatable="false" name="youtube_adding">Adding channel…</string>
     <string translatable="false" name="youtube_removing">Removing channel…</string>
     <string translatable="false" name="youtube_resolving">Getting your video ready…</string>
+    <string translatable="false" name="youtube_download_preparing">Reading video title…</string>
     <string translatable="false" name="youtube_updating">Updating yt-dlp…</string>
     <string translatable="false" name="youtube_cancel_operation">Cancel current operation</string>
     <string translatable="false" name="youtube_dismiss_notice">Dismiss message</string>

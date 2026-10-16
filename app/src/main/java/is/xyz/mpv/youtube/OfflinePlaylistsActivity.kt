@@ -201,12 +201,14 @@ class OfflinePlaylistsActivity : AppCompatActivity() {
         row.download?.let { download ->
             val playlist = selectedPlaylist() ?: return
             popup.menu.add(0, MENU_OPEN, 0, R.string.youtube_open)
-            popup.menu.add(0, MENU_UP, 1, R.string.youtube_offline_move_up).isEnabled = row.index > 0
-            popup.menu.add(0, MENU_DOWN, 2, R.string.youtube_offline_move_down).isEnabled = row.index < playlist.downloadIds.lastIndex
-            popup.menu.add(0, MENU_REMOVE, 3, R.string.youtube_offline_remove)
+            popup.menu.add(0, MENU_RENAME, 1, R.string.youtube_offline_rename_file)
+            popup.menu.add(0, MENU_UP, 2, R.string.youtube_offline_move_up).isEnabled = row.index > 0
+            popup.menu.add(0, MENU_DOWN, 3, R.string.youtube_offline_move_down).isEnabled = row.index < playlist.downloadIds.lastIndex
+            popup.menu.add(0, MENU_REMOVE, 4, R.string.youtube_offline_remove)
             popup.setOnMenuItemClickListener {
                 when (it.itemId) {
                     MENU_OPEN -> model.open(download.destination, download.title)
+                    MENU_RENAME -> showOfflineRenameDialog(this, model, download)
                     MENU_UP -> model.movePlaylistItem(playlist.id, download.id, -1)
                     MENU_DOWN -> model.movePlaylistItem(playlist.id, download.id, 1)
                     MENU_REMOVE -> model.removeFromPlaylist(playlist.id, download.id)
@@ -313,6 +315,8 @@ class OfflinePlaylistsActivity : AppCompatActivity() {
             holder.icon.visibility = if (row.index < 0) View.VISIBLE else View.GONE
             holder.index.visibility = if (row.index >= 0) View.VISIBLE else View.GONE
             holder.index.text = (row.index + 1).toString()
+            holder.thumbnail.visibility = if (row.download != null) View.VISIBLE else View.GONE
+            holder.thumbnail.showSavedVideo(row.download?.videoId)
             holder.more.visibility = if (showMenus) View.VISIBLE else View.GONE
             holder.more.contentDescription = holder.itemView.context.getString(R.string.youtube_offline_options, row.title)
             holder.more.isEnabled = enabled
@@ -320,7 +324,9 @@ class OfflinePlaylistsActivity : AppCompatActivity() {
             holder.itemView.setOnClickListener { if (enabled) open(row) }
             holder.more.setOnClickListener { if (enabled) more(it, row) }
         }
+        override fun onViewRecycled(holder: Holder) { holder.thumbnail.showSavedVideo(null); super.onViewRecycled(holder) }
         class Holder(view: View) : RecyclerView.ViewHolder(view) {
+            val thumbnail: YouTubeThumbnailView = view.findViewById(R.id.youtube_offline_thumbnail)
             val title: TextView = view.findViewById(R.id.youtube_offline_title)
             val metadata: TextView = view.findViewById(R.id.youtube_offline_metadata)
             val icon: ImageView = view.findViewById(R.id.youtube_offline_icon)
@@ -343,4 +349,43 @@ class OfflinePlaylistsActivity : AppCompatActivity() {
         private const val MENU_DOWN = 210
         private const val MENU_REMOVE = 211
     }
+}
+
+/** Both offline entry points rename the document itself, while the format suffix stays fixed. */
+internal fun showOfflineRenameDialog(activity: AppCompatActivity, model: OfflineLibraryViewModel, saved: OfflineDownload) {
+    val extension = ".${saved.format.extension}"
+    val basename = if (saved.title.endsWith(extension, ignoreCase = true)) saved.title.dropLast(extension.length) else saved.title
+    val inputLayout = TextInputLayout(activity).apply {
+        hint = activity.getString(R.string.youtube_offline_filename)
+        suffixText = extension
+        boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_FILLED
+        setBoxCornerRadii(0f, 0f, 0f, 0f)
+    }
+    val input = TextInputEditText(inputLayout.context).apply {
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        setSingleLine(true)
+        filters = arrayOf(InputFilter.LengthFilter(OfflineLibraryPolicy.MAX_TITLE_CHARS))
+        setText(basename)
+        setSelection(text?.length ?: 0)
+    }
+    inputLayout.addView(input)
+    val padding = Utils.convertDp(activity, 24f)
+    val container = LinearLayout(activity).apply {
+        setPadding(padding, Utils.convertDp(activity, 8f), padding, 0)
+        addView(inputLayout, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+    val dialog = MaterialAlertDialogBuilder(activity).setTitle(R.string.youtube_offline_rename_file).setView(container)
+        .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.youtube_offline_rename, null).create()
+    val observer = Observer<OfflineLibraryUiState> { dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = !it.busy }
+    dialog.setOnShowListener {
+        model.state.observe(activity, observer)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val name = input.text.toString().trim()
+            if (name.isBlank() || name.any(Char::isISOControl) || name.all { it.isWhitespace() || it in "\\/:*?\"<>|." }) {
+                inputLayout.error = activity.getString(R.string.youtube_offline_filename_invalid)
+            } else { model.renameDownload(saved.id, name); dialog.dismiss() }
+        }
+    }
+    dialog.setOnDismissListener { model.state.removeObserver(observer) }
+    dialog.show()
 }

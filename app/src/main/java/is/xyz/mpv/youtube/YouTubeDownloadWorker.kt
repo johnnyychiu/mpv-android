@@ -8,6 +8,7 @@ import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
 import androidx.work.ForegroundInfo
@@ -32,7 +33,7 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
     @Volatile private var copyingInput: InputStream? = null
     @Volatile private var copyingOutput: OutputStream? = null
     private var lastProgressTime = 0L
-    private val title = inputData.getString("title").orEmpty().ifBlank { "YouTube video" }.take(300)
+    private val title = inputData.getString("title").orEmpty().ifBlank { "YouTube video" }.take(OfflineLibraryPolicy.MAX_TITLE_CHARS)
 
     override fun doWork(): Result {
         val stagingRoot = File(applicationContext.cacheDir, "youtube-downloads").canonicalFile
@@ -40,7 +41,8 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
         return try {
             check(staging.parentFile == stagingRoot) { "Invalid temporary download folder." }
             ensureActive()
-            val url = inputData.getString("url") ?: error("The video link is missing.")
+            val url = YouTubeMediaPolicy.videoUrl(inputData.getString("url") ?: error("The video link is missing."))
+            val videoId = OfflineLibraryPolicy.videoId(url.substringAfter("?v="))
             val format = DownloadFormat.valueOf(inputData.getString("format") ?: error("The download format is missing."))
             val destination = Uri.parse(inputData.getString("destination") ?: error("The save location is missing."))
             OfflineLibraryPolicy.destination(destination.toString())
@@ -57,17 +59,21 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
             reportProgress(99, "Saving to the selected location", force = true)
             copyToDocument(completedFile, destination)
             ensureActive()
+            val savedTitle = savedDocumentTitle(destination)
             // Only publish fully copied, closed documents. This survives WorkManager
             // history pruning and remains idempotent if a completed job is retried.
             try {
                 OfflineLibraryRepository(applicationContext).record(
-                    OfflineDownload(id.toString(), destination.toString(), title, format, System.currentTimeMillis())
+                    OfflineDownload(id.toString(), destination.toString(), savedTitle, format, System.currentTimeMillis(), videoId)
                 )
             } catch (error: Exception) {
                 throw IOException("The file was saved, but could not be added to the offline library: ${error.message.orEmpty()}", error)
             }
-            setProgressAsync(workDataOf("percent" to 100, "status" to "Saved", "title" to title)).get()
-            Result.success(workDataOf("destination" to destination.toString(), "title" to title))
+            // Artwork is optional: a failed image request must not turn a saved media file into a failed job.
+            runCatching { OfflineThumbnailStore(applicationContext).cache(videoId) }
+            ensureActive()
+            setProgressAsync(workDataOf("percent" to 100, "status" to "Saved", "title" to savedTitle)).get()
+            Result.success(workDataOf("destination" to destination.toString(), "title" to savedTitle, "videoId" to videoId))
         } catch (error: Exception) {
             if (error is InterruptedException) Thread.currentThread().interrupt()
             val message = if (isStopped || cancelled.get() || error is CancellationException || error is InterruptedException) {
@@ -116,6 +122,13 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
         }
         copyingInput = null
     }
+
+    private fun savedDocumentTitle(destination: Uri): String = runCatching {
+        applicationContext.contentResolver.query(destination, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (column >= 0 && cursor.moveToFirst()) cursor.getString(column)?.takeIf { it.isNotBlank() } else null
+        }
+    }.getOrNull()?.take(OfflineLibraryPolicy.MAX_TITLE_CHARS) ?: title
 
     private fun closeCopyStreams() {
         runCatching { copyingInput?.close() }
@@ -176,7 +189,7 @@ class YouTubeDownloadWorker(context: Context, parameters: WorkerParameters) : Wo
             val normalizedUrl = YouTubeMediaPolicy.videoUrl(url)
             OfflineLibraryPolicy.destination(destination.toString())
             val request = OneTimeWorkRequestBuilder<YouTubeDownloadWorker>()
-                .setInputData(workDataOf("url" to normalizedUrl, "title" to title.take(300), "format" to format.name,
+                .setInputData(workDataOf("url" to normalizedUrl, "title" to title.take(OfflineLibraryPolicy.MAX_TITLE_CHARS), "format" to format.name,
                     "destination" to destination.toString()))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .addTag(TAG)

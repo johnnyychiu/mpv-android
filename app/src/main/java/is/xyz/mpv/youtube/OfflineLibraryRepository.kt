@@ -18,6 +18,10 @@ class OfflineLibraryRepository(context: Context) {
 
     fun record(download: OfflineDownload) = change { OfflineLibraryPolicy.record(it, download) }
 
+    fun renameDownload(id: String, title: String, destination: String) = change {
+        OfflineLibraryPolicy.renameDownload(it, id, title, destination)
+    }
+
     fun createPlaylist(name: String) = change {
         OfflineLibraryPolicy.createPlaylist(it, UUID.randomUUID().toString(), name)
     }
@@ -67,8 +71,13 @@ class OfflineLibraryRepository(context: Context) {
             }
             val files = (0 until downloads.length()).map { index ->
                 val item = downloads.getJSONObject(index)
-                OfflineDownload(text(item, "id"), text(item, "destination"), text(item, "title"),
-                    DownloadFormat.valueOf(text(item, "format")), number(item, "savedAt"))
+                val title = text(item, "title")
+                OfflineDownload(text(item, "id"), text(item, "destination"), title,
+                    DownloadFormat.valueOf(text(item, "format")), number(item, "savedAt"),
+                    if (item.has("videoId") && !item.isNull("videoId")) text(item, "videoId") else OfflineLibraryPolicy.legacyVideoId(title),
+                    if (item.has("userRenamed")) item.get("userRenamed") as? Boolean
+                        ?: throw IOException("A saved rename flag is invalid.") else false,
+                    if (item.has("sourceIds")) identifiers(item.getJSONArray("sourceIds")) else emptyList())
             }
             val lists = (0 until playlists.length()).map { index ->
                 val item = playlists.getJSONObject(index)
@@ -90,7 +99,8 @@ class OfflineLibraryRepository(context: Context) {
         val downloads = JSONArray()
         snapshot.downloads.forEach {
             downloads.put(JSONObject().put("id", it.id).put("destination", it.destination).put("title", it.title)
-                .put("format", it.format.name).put("savedAt", it.savedAt))
+                .put("format", it.format.name).put("savedAt", it.savedAt).put("videoId", it.videoId ?: JSONObject.NULL)
+                .put("userRenamed", it.userRenamed).put("sourceIds", JSONArray(it.sourceIds)))
         }
         val playlists = JSONArray()
         snapshot.playlists.forEach {
@@ -111,6 +121,13 @@ class OfflineLibraryRepository(context: Context) {
 
     private fun text(item: JSONObject, key: String): String =
         item.get(key) as? String ?: throw IOException("A saved library field is invalid.")
+
+    private fun identifiers(values: JSONArray): List<String> {
+        require(values.length() <= OfflineLibraryPolicy.MAX_SOURCE_IDS) { "A saved file has too many source identifiers." }
+        return (0 until values.length()).map { position ->
+            values.get(position) as? String ?: throw IOException("A saved source identifier is invalid.")
+        }
+    }
 
     private fun number(item: JSONObject, key: String): Long {
         val value = item.get(key) as? Number ?: throw IOException("A saved library date is invalid.")

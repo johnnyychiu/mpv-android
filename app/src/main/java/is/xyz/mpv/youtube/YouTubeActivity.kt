@@ -56,6 +56,7 @@ import java.util.UUID
 
 class YouTubeActivity : AppCompatActivity() {
     private lateinit var model: YouTubeViewModel
+    private lateinit var downloadPreparation: DownloadPreparationViewModel
     private lateinit var offlineModel: OfflineLibraryViewModel
     private lateinit var videos: VideoAdapter
     private lateinit var channels: ChannelAdapter
@@ -74,7 +75,7 @@ class YouTubeActivity : AppCompatActivity() {
     private lateinit var emptyLink: MaterialButton
     private var section = Section.FEED
     private var incomingUrl: String? = null
-    private var pendingDownload: PendingDownload? = null
+    private var pendingDownload: PreparedDownload? = null
     private var downloadInfos: List<WorkInfo> = emptyList()
     private var downloadRows: List<DownloadRow> = emptyList()
     private var offlineSnapshot = OfflineLibrarySnapshot()
@@ -92,6 +93,7 @@ class YouTubeActivity : AppCompatActivity() {
     private val saveDocument = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val pending = pendingDownload
         pendingDownload = null
+        render(model.state.value ?: YouTubeUiState())
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null || pending == null) return@registerForActivityResult
         try {
@@ -121,8 +123,10 @@ class YouTubeActivity : AppCompatActivity() {
         setSupportActionBar(findViewById<MaterialToolbar>(R.id.youtube_toolbar))
         supportActionBar?.setDisplayShowTitleEnabled(false)
         model = ViewModelProvider(this)[YouTubeViewModel::class.java]
+        downloadPreparation = ViewModelProvider(this)[DownloadPreparationViewModel::class.java]
         offlineModel = ViewModelProvider(this)[OfflineLibraryViewModel::class.java]
         incomingUrl = intent.getStringExtra("youtube_url") ?: intent.dataString
+        var restoredPreparation: DownloadPreparationRequest? = null
         savedInstanceState?.let { saved ->
             section = runCatching { Section.valueOf(saved.getString("youtube_section").orEmpty()) }.getOrDefault(Section.FEED)
             dismissedNotice = saved.getString("youtube_dismissed_notice")
@@ -131,8 +135,22 @@ class YouTubeActivity : AppCompatActivity() {
             val title = saved.getString("youtube_pending_title")
             val format = saved.getString("youtube_pending_format")
             if (url != null && title != null && format != null) {
-                pendingDownload = runCatching { PendingDownload(YouTubeUrls.videoUrl(url), title, DownloadFormat.valueOf(format)) }.getOrNull()
+                pendingDownload = runCatching {
+                    val canonical = YouTubeUrls.videoUrl(url)
+                    require(title.isNotBlank())
+                    PreparedDownload(canonical, title, canonical.substringAfter("v="), DownloadFormat.valueOf(format))
+                }.getOrNull()
             }
+            val preparingUrl = saved.getString("youtube_preparing_url")
+            val preparingFormat = saved.getString("youtube_preparing_format")
+            if (pendingDownload == null && preparingUrl != null && preparingFormat != null) {
+                restoredPreparation = runCatching {
+                    DownloadPreparationRequest(YouTubeUrls.videoUrl(preparingUrl), DownloadFormat.valueOf(preparingFormat))
+                }.getOrNull()
+            }
+        }
+        if (pendingDownload != null || restoredPreparation != null || downloadPreparation.state.value?.preparing == true || downloadPreparation.state.value?.ready != null) {
+            model.initialActionHandled = true
         }
         bindViews()
         val configuration = resources.configuration
@@ -144,7 +162,7 @@ class YouTubeActivity : AppCompatActivity() {
         }
         videos = VideoAdapter(
             play = { model.play(it.url) },
-            download = { video, format -> requestDownload(video.url, video.title, format) },
+            download = { video, format -> requestDownload(video.url, format) },
         )
         channels = ChannelAdapter(::showChannelDetails, ::confirmRemoveChannel)
         downloads = DownloadAdapter(
@@ -152,6 +170,7 @@ class YouTubeActivity : AppCompatActivity() {
             open = ::openDownloadedFile,
             details = { showDetails(getString(R.string.youtube_downloads), it) },
             addToPlaylist = { startActivity(Intent(this, OfflinePlaylistsActivity::class.java).putExtra(OfflinePlaylistsActivity.EXTRA_ADD_DOWNLOAD, it.id)) },
+            rename = { showOfflineRenameDialog(this, offlineModel, it) },
         )
         listOf(videos, channels, downloads).forEach { it.stateRestorationPolicy = RecyclerView.Adapter.StateRestorationPolicy.PREVENT_WHEN_EMPTY }
         val gap = resources.getDimensionPixelSize(R.dimen.youtube_grid_gap)
@@ -173,7 +192,9 @@ class YouTubeActivity : AppCompatActivity() {
             override fun onTabReselected(tab: TabLayout.Tab) { content.smoothScrollToPosition(0) }
         })
         tabs.getTabAt(section.ordinal)?.select()
-        findViewById<View>(R.id.youtube_cancel).setOnClickListener { model.cancel() }
+        findViewById<View>(R.id.youtube_cancel).setOnClickListener {
+            if (downloadPreparation.state.value?.preparing == true) downloadPreparation.cancel() else model.cancel()
+        }
         findViewById<View>(R.id.youtube_notice_close).setOnClickListener {
             dismissedNotice = displayedNotice
             notice.visibility = View.GONE
@@ -193,6 +214,26 @@ class YouTubeActivity : AppCompatActivity() {
                 if (url != null) model.play(url)
                 else if (state.snapshot.subscriptions.isNotEmpty()) model.refresh()
             }
+        }
+        downloadPreparation.state.observe(this) { state ->
+            render(model.state.value ?: YouTubeUiState())
+            state.ready?.let {
+                val prepared = downloadPreparation.consumeReady() ?: return@let
+                if (pendingDownload == null) {
+                    pendingDownload = prepared
+                    render(model.state.value ?: YouTubeUiState())
+                    requestSaveLocation()
+                }
+            }
+            state.error?.let { error ->
+                downloadPreparation.consumeError()
+                dismissedNotice = null
+                model.showMessage(error)
+            }
+        }
+        restoredPreparation?.let {
+            // A retained lookup continues itself; only a new process needs to restart it.
+            if (downloadPreparation.state.value == DownloadPreparationState()) requestDownload(it.url, it.format)
         }
         offlineModel.state.observe(this) { state ->
             offlineSnapshot = state.snapshot
@@ -244,6 +285,7 @@ class YouTubeActivity : AppCompatActivity() {
         incomingUrl = intent.getStringExtra("youtube_url") ?: intent.dataString
         incomingUrl?.let {
             model.initialActionHandled = true
+            downloadPreparation.cancel()
             model.cancel()
             model.play(it)
         }
@@ -258,6 +300,12 @@ class YouTubeActivity : AppCompatActivity() {
             outState.putString("youtube_pending_url", it.url)
             outState.putString("youtube_pending_title", it.title)
             outState.putString("youtube_pending_format", it.format.name)
+        }
+        val preparation = downloadPreparation.state.value
+        val unfinished = preparation?.request ?: preparation?.ready?.let { DownloadPreparationRequest(it.url, it.format) }
+        unfinished?.let {
+            outState.putString("youtube_preparing_url", it.url)
+            outState.putString("youtube_preparing_format", it.format.name)
         }
         super.onSaveInstanceState(outState)
     }
@@ -280,7 +328,7 @@ class YouTubeActivity : AppCompatActivity() {
 
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
         val state = model.state.value ?: YouTubeUiState()
-        val idle = state.operation == null
+        val idle = state.operation == null && !hasPendingDownload()
         menu.findItem(MENU_ADD)?.isEnabled = idle
         menu.findItem(MENU_REFRESH)?.isEnabled = idle && state.snapshot.subscriptions.isNotEmpty()
         menu.findItem(MENU_LINK)?.isEnabled = canStartPlayback(state)
@@ -304,7 +352,8 @@ class YouTubeActivity : AppCompatActivity() {
 
     private fun renderDownloads() {
         val savedDestinations = offlineSnapshot.downloads.mapTo(mutableSetOf()) { it.destination }
-        val jobs = downloadInfos.filter { it.state != WorkInfo.State.SUCCEEDED || it.outputData.getString("destination") !in savedDestinations }
+        val savedSourceIds = offlineSnapshot.downloads.flatMapTo(mutableSetOf()) { listOf(it.id) + it.sourceIds }
+        val jobs = downloadInfos.filter { it.state != WorkInfo.State.SUCCEEDED || (it.id.toString() !in savedSourceIds && it.outputData.getString("destination") !in savedDestinations) }
         downloadRows = (jobs.map { DownloadRow(work = it) } + offlineSnapshot.downloads.map { DownloadRow(saved = it) })
             .sortedWith(compareBy<DownloadRow> { it.work?.state?.isFinished != false }.thenByDescending { it.saved?.savedAt ?: it.work?.let(::createdAt) ?: 0L }.thenBy { it.key })
         downloads.submitList(downloadRows)
@@ -327,14 +376,15 @@ class YouTubeActivity : AppCompatActivity() {
     }
 
     private fun render(state: YouTubeUiState) {
-        val idle = state.operation == null
+        val preparing = downloadPreparation.state.value?.preparing == true
+        val idle = state.operation == null && !hasPendingDownload()
         videos.setPlaybackEnabled(canStartPlayback(state))
         channels.setActionsEnabled(idle)
         videos.submitList(state.snapshot.videos)
         val uploadCounts = state.snapshot.videos.groupingBy { it.channelId }.eachCount()
         channels.submitList(state.snapshot.subscriptions.map { ChannelRow(it, uploadCounts[it.channelId] ?: 0) })
-        busy.visibility = if (idle) View.GONE else View.VISIBLE
-        busyText.text = when (state.operation) {
+        busy.visibility = if (state.operation == null && !preparing) View.GONE else View.VISIBLE
+        busyText.text = if (preparing) getString(R.string.youtube_download_preparing) else when (state.operation) {
             YouTubeOperation.LOAD -> getString(R.string.youtube_loading)
             YouTubeOperation.ADD -> getString(R.string.youtube_adding)
             YouTubeOperation.REMOVE -> getString(R.string.youtube_removing)
@@ -348,7 +398,7 @@ class YouTubeActivity : AppCompatActivity() {
     }
 
     private fun renderSection(state: YouTubeUiState) {
-        val idle = state.operation == null
+        val idle = state.operation == null && !hasPendingDownload()
         val hasChannels = state.snapshot.subscriptions.isNotEmpty()
         val isEmpty = when (section) {
             Section.FEED -> state.snapshot.videos.isEmpty()
@@ -404,14 +454,13 @@ class YouTubeActivity : AppCompatActivity() {
 
     private fun showVideoLink() = showLinkDialog(R.string.youtube_open_video, R.string.youtube_video_hint, R.string.youtube_continue) { text ->
         val url = YouTubeUrls.videoUrl(text)
-        val title = "YouTube ${Uri.parse(url).getQueryParameter("v")}"
         MaterialAlertDialogBuilder(this).setTitle(R.string.youtube_video_actions).setItems(arrayOf(
             getString(R.string.youtube_watch), getString(R.string.youtube_download_mp4), getString(R.string.youtube_download_mp3),
         )) { _, index ->
             when (index) {
                 0 -> model.play(url)
-                1 -> requestDownload(url, title, DownloadFormat.MP4)
-                2 -> requestDownload(url, title, DownloadFormat.MP3)
+                1 -> requestDownload(url, DownloadFormat.MP4)
+                2 -> requestDownload(url, DownloadFormat.MP3)
             }
         }.setNegativeButton(android.R.string.cancel, null).show()
     }
@@ -470,26 +519,38 @@ class YouTubeActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun requestDownload(url: String, title: String, format: DownloadFormat) {
-        if (pendingDownload != null) return
-        pendingDownload = PendingDownload(YouTubeUrls.videoUrl(url), title, format)
-        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else launchSavePicker()
+    private fun requestDownload(url: String, format: DownloadFormat) {
+        val state = model.state.value ?: YouTubeUiState()
+        if (!canStartPlayback(state)) return
+        model.initialActionHandled = true
+        if (state.operation == YouTubeOperation.REFRESH) model.cancel()
+        downloadPreparation.prepare(url, format)
+    }
+
+    private fun requestSaveLocation() {
+        try {
+            if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else launchSavePicker()
+        } catch (_: Exception) {
+            pendingDownload = null
+            render(model.state.value ?: YouTubeUiState())
+            model.showMessage(getString(R.string.youtube_download_picker_failed))
+        }
     }
 
     private fun launchSavePicker() {
         val pending = pendingDownload ?: return
-        val basename = pending.title.replace(Regex("[\\p{Cntrl}\\\\/:*?\"<>|]"), " ").replace(Regex("\\s+"), " ").trim().trim('.').take(100).ifEmpty { "youtube-video" }
         try {
             saveDocument.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = pending.format.mimeType
-                putExtra(Intent.EXTRA_TITLE, "$basename.${pending.format.extension}")
+                putExtra(Intent.EXTRA_TITLE, MediaFilenamePolicy.filename(pending.title, pending.format.extension, pending.videoId))
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             })
         } catch (_: Exception) {
             pendingDownload = null
+            render(model.state.value ?: YouTubeUiState())
             model.showMessage(getString(R.string.youtube_download_picker_failed))
         }
     }
@@ -522,11 +583,12 @@ class YouTubeActivity : AppCompatActivity() {
         MaterialAlertDialogBuilder(this).setTitle(title).setMessage(message).setPositiveButton(R.string.youtube_close, null).show()
     }
 
-    private fun canStartPlayback(state: YouTubeUiState) = state.operation == null || state.operation == YouTubeOperation.REFRESH || state.operation == YouTubeOperation.LOAD
+    private fun hasPendingDownload() = pendingDownload != null || downloadPreparation.state.value?.let { it.preparing || it.ready != null } == true
+    private fun canStartPlayback(state: YouTubeUiState) = !hasPendingDownload() &&
+        (state.operation == null || state.operation == YouTubeOperation.REFRESH || state.operation == YouTubeOperation.LOAD)
     private fun dp(value: Int) = Utils.convertDp(this, value.toFloat())
     private fun dateTime(time: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(time))
     private enum class Section { FEED, CHANNELS, DOWNLOADS }
-    private data class PendingDownload(val url: String, val title: String, val format: DownloadFormat)
     private data class ChannelRow(val subscription: YouTubeSubscription, val uploads: Int)
     private data class DownloadRow(val work: WorkInfo? = null, val saved: OfflineDownload? = null) {
         val key: String get() = saved?.let { "saved:${it.id}" } ?: "work:${work?.id}"
@@ -608,7 +670,7 @@ class YouTubeActivity : AppCompatActivity() {
         }
     }
 
-    private class DownloadAdapter(val cancel: (UUID) -> Unit, val open: (String, String) -> Unit, val details: (String) -> Unit, val addToPlaylist: (OfflineDownload) -> Unit) :
+    private class DownloadAdapter(val cancel: (UUID) -> Unit, val open: (String, String) -> Unit, val details: (String) -> Unit, val addToPlaylist: (OfflineDownload) -> Unit, val rename: (OfflineDownload) -> Unit) :
         ListAdapter<DownloadRow, DownloadAdapter.Holder>(object : DiffUtil.ItemCallback<DownloadRow>() {
             override fun areItemsTheSame(oldItem: DownloadRow, newItem: DownloadRow) = oldItem.key == newItem.key
             override fun areContentsTheSame(oldItem: DownloadRow, newItem: DownloadRow) = oldItem == newItem
@@ -619,6 +681,7 @@ class YouTubeActivity : AppCompatActivity() {
             val info = row.work
             val saved = row.saved
             val context = holder.itemView.context
+            holder.thumbnail.showSavedVideo(saved?.videoId)
             val title = saved?.title ?: info?.outputData?.getString("title") ?: info?.progress?.getString("title") ?: context.getString(R.string.youtube_download_generic)
             val format = saved?.format?.name ?: info?.tags?.firstOrNull { it.startsWith("youtube-format:") }?.removePrefix("youtube-format:")?.takeIf { it == "MP4" || it == "MP3" }
             holder.title.text = title
@@ -662,13 +725,16 @@ class YouTubeActivity : AppCompatActivity() {
             holder.more.contentDescription = context.getString(R.string.youtube_offline_options, title)
             holder.more.setOnClickListener { anchor ->
                 if (saved != null) PopupMenu(context, anchor).apply {
-                    menu.add(R.string.youtube_offline_add_to_playlist)
-                    setOnMenuItemClickListener { addToPlaylist(saved); true }
+                    menu.add(0, 1, 0, R.string.youtube_offline_add_to_playlist)
+                    menu.add(0, 2, 1, R.string.youtube_offline_rename_file)
+                    setOnMenuItemClickListener { if (it.itemId == 2) rename(saved) else addToPlaylist(saved); true }
                 }.show()
             }
             holder.itemView.setOnClickListener(if (state == WorkInfo.State.FAILED) View.OnClickListener { details(status) } else null)
         }
+        override fun onViewRecycled(holder: Holder) { holder.thumbnail.showSavedVideo(null); super.onViewRecycled(holder) }
         class Holder(view: View) : RecyclerView.ViewHolder(view) {
+            val thumbnail: YouTubeThumbnailView = view.findViewById(R.id.youtube_download_thumbnail)
             val title: TextView = view.findViewById(R.id.youtube_download_title)
             val format: TextView = view.findViewById(R.id.youtube_download_format)
             val created: TextView = view.findViewById(R.id.youtube_download_created)

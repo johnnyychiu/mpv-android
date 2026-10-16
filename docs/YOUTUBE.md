@@ -39,14 +39,16 @@ If the default extraction cannot provide a usable stream, the app can retry with
 
 ## Saving MP4 or MP3
 
-Choose **MP4** or **MP3**, then choose a filename and location in Android's system save picker. The selected destination can be Downloads or another document provider. The download runs through WorkManager with progress and cancellation available from **Downloads** and its notification.
+Choose **MP4** or **MP3**. The app looks up the original video title before opening Android's system save picker and suggests that title with the correct extension. Unicode titles are preserved; characters that cannot safely appear in filenames are cleaned. You can change the filename and choose Downloads or another document provider. The download runs through WorkManager with progress and cancellation available from **Downloads** and its notification.
 
 - **MP4** downloads video and audio, merging them with FFmpeg. If necessary, FFmpeg converts the selected source to an MP4 container; the app checks the result before saving it.
 - **MP3** extracts the audio and uses FFmpeg to encode it as MP3. It does not simply rename a different audio format.
 
 Completed files are copied from the app's private temporary folder to the selected destination. Large videos and conversion need free storage and can take time. The app currently accepts finished videos for download; active, upcoming, and still-processing livestreams are rejected.
 
-When metadata lookup needs the Android-client fallback, the actual download request uses that same client selection. Successful downloads enter the durable library only after their destination file has been copied and closed.
+When metadata lookup needs the Android-client fallback, the actual download request uses that same client selection. Successful downloads enter the durable library only after their destination file has been copied and closed. The library records the document provider's actual filename, including any change made in the save picker.
+
+Version `2026-10-16-youtube.4` (version code 51) saves the video's thumbnail in private app storage after a successful download. Downloads and playlist entries use that local image without a network request. Thumbnail requests use a validated video ID and the fixed official YouTube image host, with a 1 MiB response limit, 8-second connect/read timeouts, and a 25-second request deadline; a missing image never makes a saved media file fail. Previously imported files without a known video ID use the normal placeholder. Artwork is retained rather than evicted when the thumbnail store reaches its 64 MiB limit; further image downloads are then skipped.
 
 Use the YouTube tools update action when extraction stops working. It updates yt-dlp from its stable update channel. Public feeds and extraction may still fail when YouTube changes its site, limits requests, blocks the device or network, or requires sign-in. This fork does not provide cookies, account login, or access to private and age-restricted videos. An update cannot guarantee every video will work.
 
@@ -60,6 +62,8 @@ Version `2026-10-16-youtube.3` (version code 50) keeps completed downloads in an
 4. Choose **Play all** to start the ordered queue in native mpv. It replaces current playback, including background playback. The player's previous/next, shuffle, and repeat controls remain available.
 
 **Import MP4 / MP3 files** adds previously saved files through Android's document picker, including files whose old WorkManager records have already been pruned. Imports request lasting read access and accept up to 50 files at a time. The library supports up to 1,000 saved files and 50 playlists, with 200 entries per playlist. Playlist actions never delete downloaded files.
+
+A saved file's **Rename** action renames the actual document through its provider, while keeping the library ID, saved date, artwork, and playlist memberships. The provider must support renaming and grant access. The library records the returned document address when a rename changes it. Older download-job records and duplicate import IDs cannot restore a previous filename or re-add the old address. Existing version-1 libraries remain readable; the additional artwork, rename, and source-ID metadata is optional in older records.
 
 Offline playback reads the saved documents directly and does not call yt-dlp or the YouTube API. The player checks file access before replacing the current queue; unavailable documents produce an error so you can restore access or import them again. Files need to remain available from their selected document provider for playback without a network connection.
 
@@ -132,6 +136,22 @@ The original mpv-android [MIT license](../LICENSE) is retained. The APK also inc
 | JUnit (test dependency) | `junit:junit:4.13.2`; [source](https://github.com/junit-team/junit4/tree/r4.13.2), [license](https://github.com/junit-team/junit4/blob/r4.13.2/LICENSE-junit.txt) |
 
 ## Validation record
+
+Checks for `2026-10-16-youtube.4` (version code 51) were recorded on 2026-10-16 with the default debug build and an Android API 36 x86_64 emulator. This update adds original-title filenames, retained offline thumbnails, and document renaming. Eight additional library-policy tests cover stable rename references, stale and aliased job backfills, optional metadata defaults, strict recovery of IDs from the former placeholder title, and validation boundaries.
+
+| Version 51 check | Observed result |
+| --- | --- |
+| Unit tests, assemble, and lint, before the thumbnail-helper follow-up | APK assembled; all 87 unit tests passed; lint reported zero errors, 110 warnings, and one hint. |
+| Thumbnail-helper follow-up | Increasing the bounded timeouts and adding debug diagnostics assembled and linted successfully. The 87-test run preceded this helper-only change. |
+| Original-title MP4 export | Video `8Pae6Wy1abE` saved as a real 3,090,979-byte MP4 with its original title and the provider's `(1).mp4` collision suffix. |
+| Original-title MP3 export | The real 1,302,329-byte MP3 download used its original title and the provider's `(1).mp3` collision suffix. |
+| Rotation during title lookup | Rotating during metadata lookup produced one save picker with the original title. |
+| Actual document renames | Renamed an existing MP3 from Downloads to `My music.mp3` and an MP4 from its playlist to `My video.mp4`. The physical files were verified, and catalog IDs, saved dates, and the two-entry playlist order remained intact. |
+| Retained thumbnail after the helper follow-up | A genuine MP3 job saved `8Pae6Wy1abE.jpg` in private storage as a 16,528-byte JPEG, without a thumbnail debug warning. |
+| Offline thumbnails after force-stop and restart | With airplane mode enabled and Wi-Fi disabled, Downloads showed all four cached thumbnails, including the new exports and legacy/renamed records. The playlist showed both cached thumbnails. |
+| Renamed playlist playback offline | Native mpv played the saved MP3 with 48,000 Hz stereo audio, then advanced to the saved MP4 with GPU video output at 360 × 640. |
+
+The initial thumbnail attempt did not leave a cached file. The later bounded-timeout change passed the real download and offline restart checks, but the original failure's cause has not been confirmed. Runtime rename checks used Android's Downloads document provider; a different provider that changes its document URI during rename was not tested.
 
 Checks for `2026-10-16-youtube.3` (version code 50) were recorded on 2026-10-16 with the default debug build and an Android API 36 x86_64 emulator. Native public YouTube playback, fresh-install runtime preparation, and new MP4/MP3 downloads passed. Checkpoints from before the final bundled-installer integration are identified separately. The fresh-install test cleared app data only on the disposable emulator.
 

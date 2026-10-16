@@ -21,6 +21,9 @@ data class ResolvedVideo(
     val httpChunkSize: Long? = null
 )
 
+/** Public display metadata; signed playback URLs are deliberately not retained here. */
+data class VideoMetadata(val title: String, val videoId: String)
+
 /** All operations except cancel are blocking and must run off the main thread. */
 object YouTubeEngine {
     @Volatile private var initialized = false
@@ -56,6 +59,32 @@ object YouTubeEngine {
                 primary = { parsePlaybackInfo(readInfo(normalizedUrl, "bestvideo+bestaudio/best", session)) },
                 fallback = {
                     parsePlaybackInfo(readInfo(
+                        normalizedUrl, "best[protocol=https][vcodec!=none][acodec!=none]", session,
+                        androidClient = true
+                    ))
+                },
+                checkCancelled = session::checkCancelled
+            ).also { session.checkCancelled() }
+        }
+
+    /** Resolve the original title before creating a user-selected download document. */
+    fun readMetadata(context: Context, url: String, processId: String): VideoMetadata =
+        withSession(processId) { session ->
+            val normalizedUrl = YouTubeMediaPolicy.videoUrl(url)
+            val expectedId = normalizedUrl.substringAfter("v=")
+            initialize(context)
+            session.checkCancelled()
+            fun metadata(info: JSONObject): VideoMetadata {
+                requirePublicVideo(info)
+                require(info.optString("id") == expectedId) { "YouTube returned information for a different video." }
+                val title = (info.opt("title") as? String)?.takeIf(String::isNotBlank)
+                    ?: throw IllegalStateException("YouTube returned unreadable video information: the title is missing.")
+                return VideoMetadata(title, expectedId)
+            }
+            PlaybackFallbackPolicy.resolve(
+                primary = { metadata(readInfo(normalizedUrl, "bestvideo+bestaudio/best", session)) },
+                fallback = {
+                    metadata(readInfo(
                         normalizedUrl, "best[protocol=https][vcodec!=none][acodec!=none]", session,
                         androidClient = true
                     ))
