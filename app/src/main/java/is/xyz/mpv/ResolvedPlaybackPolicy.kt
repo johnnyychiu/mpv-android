@@ -24,7 +24,13 @@ internal object ResolvedPlaybackPolicy {
             // mpv's string-list parser treats an escaped comma as literal text.
             "$name: $value".replace(",", "\\,")
         }.joinToString(",")
-        val safeTitle = title.orEmpty().take(1024).map {
+        val titleText = title.orEmpty()
+        var titleEnd = minOf(titleText.length, 1024)
+        if (titleEnd > 0 && titleEnd < titleText.length &&
+            Character.isSurrogatePair(titleText[titleEnd - 1], titleText[titleEnd])) {
+            titleEnd--
+        }
+        val safeTitle = titleText.take(titleEnd).map {
             if (it.isISOControl()) ' ' else it
         }.joinToString("")
 
@@ -63,13 +69,22 @@ internal object ResolvedPlaybackPolicy {
     }
 
     private fun quote(value: String): String {
-        // MPVLib.command uses JNI GetStringUTFChars (modified UTF-8), including 6-byte
-        // surrogate pairs. mpv's length-prefixed option values count those bytes.
-        val byteLength = value.sumOf {
-            when (it.code) {
-                0 -> 2
-                in 1..127 -> 1
-                in 128..2047 -> 2
+        // Android's GetStringUTFChars uses 4 bytes for a valid surrogate pair,
+        // unlike Java modified UTF-8. This is already true in Android 7's ART
+        // runtime/utf.cc. Unpaired surrogates still occupy 3 bytes, and NUL 2.
+        // mpv's %length% syntax counts these native bytes, not UTF-16 code units.
+        var byteLength = 0
+        var index = 0
+        while (index < value.length) {
+            val character = value[index++]
+            byteLength += when {
+                index < value.length && Character.isSurrogatePair(character, value[index]) -> {
+                    index++
+                    4
+                }
+                character.code == 0 -> 2
+                character.code <= 127 -> 1
+                character.code <= 2047 -> 2
                 else -> 3
             }
         }

@@ -2,6 +2,7 @@ package `is`.xyz.mpv.youtube
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -127,7 +128,10 @@ class YouTubeActivity : AppCompatActivity() {
         }
         bindViews()
         val configuration = resources.configuration
-        if (configuration.fontScale > 1.3f && configuration.screenWidthDp < 400 * configuration.fontScale) {
+        if (configuration.screenWidthDp >= 600) {
+            tabs.layoutParams = tabs.layoutParams.apply { width = dp(360) }
+        }
+        if (configuration.fontScale > 1.05f && configuration.screenWidthDp < 480 * configuration.fontScale) {
             tabs.tabMode = TabLayout.MODE_SCROLLABLE
         }
         videos = VideoAdapter(
@@ -142,11 +146,12 @@ class YouTubeActivity : AppCompatActivity() {
         )
         listOf(videos, channels, downloads).forEach { it.stateRestorationPolicy = RecyclerView.Adapter.StateRestorationPolicy.PREVENT_WHEN_EMPTY }
         val gap = resources.getDimensionPixelSize(R.dimen.youtube_grid_gap)
+        val verticalGap = resources.getDimensionPixelSize(R.dimen.youtube_grid_vertical_gap)
         val edge = resources.getDimensionPixelSize(R.dimen.youtube_screen_padding)
-        content.setPadding(edge - gap / 2, 4, edge - gap / 2, dp(24))
+        content.setPadding(edge - gap / 2, 0, edge - gap / 2, dp(12))
         content.addItemDecoration(object : RecyclerView.ItemDecoration() {
             override fun getItemOffsets(outRect: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
-                outRect.set(gap / 2, gap / 2, gap / 2, gap / 2)
+                outRect.set(gap / 2, verticalGap / 2, gap / 2, verticalGap / 2)
             }
         })
         // These labels are always visible; navigation does not depend on an overflow menu.
@@ -238,9 +243,9 @@ class YouTubeActivity : AppCompatActivity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(0, MENU_ADD, 0, R.string.youtube_add_channel).setIcon(R.drawable.youtube_ic_add).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        menu.add(0, MENU_REFRESH, 1, R.string.youtube_refresh).setIcon(R.drawable.youtube_ic_refresh).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        menu.add(0, MENU_LINK, 2, R.string.youtube_open_video).setIcon(R.drawable.youtube_ic_link).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+        menu.add(0, MENU_ADD, 0, R.string.youtube_add_channel).setIcon(R.drawable.youtube_ic_add).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+        menu.add(0, MENU_REFRESH, 1, R.string.youtube_refresh).setIcon(R.drawable.youtube_ic_refresh).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
+        menu.add(0, MENU_LINK, 2, R.string.youtube_open_video).setIcon(R.drawable.youtube_ic_link).setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
         menu.add(0, MENU_LOCAL, 3, R.string.youtube_local_media)
         menu.add(0, MENU_UPDATE, 4, R.string.youtube_update)
         return true
@@ -296,7 +301,7 @@ class YouTubeActivity : AppCompatActivity() {
             YouTubeOperation.REMOVE -> getString(R.string.youtube_removing)
             YouTubeOperation.PLAY -> getString(R.string.youtube_resolving)
             YouTubeOperation.UPDATE -> getString(R.string.youtube_updating)
-            YouTubeOperation.REFRESH -> if (state.totalChannels > 0) getString(R.string.youtube_refresh_progress, state.completedChannels + 1, state.totalChannels) else getString(R.string.youtube_refreshing)
+            YouTubeOperation.REFRESH -> if (state.totalChannels > 0) getString(R.string.youtube_refresh_progress, (state.completedChannels + 1).coerceAtMost(state.totalChannels), state.totalChannels) else getString(R.string.youtube_refreshing)
             null -> ""
         }
         renderSection(state)
@@ -344,8 +349,8 @@ class YouTubeActivity : AppCompatActivity() {
             }
         }
         val failures = state.snapshot.subscriptions.filter { it.lastError != null }
-        displayedNotice = state.message ?: if (section == Section.FEED && failures.isNotEmpty()) {
-            getString(R.string.youtube_cached_notice) + "\n\n" + failures.joinToString("\n") { "${it.title}: ${it.lastError}" }
+        displayedNotice = state.message?.let { presentError(this, it) } ?: if (section == Section.FEED && failures.isNotEmpty()) {
+            getString(R.string.youtube_cached_notice) + "\n\n" + failures.joinToString("\n") { "${it.title}: ${presentError(this, it.lastError.orEmpty())}" }
         } else null
         val showNotice = !displayedNotice.isNullOrBlank() && displayedNotice != dismissedNotice
         notice.visibility = if (showNotice) View.VISIBLE else View.GONE
@@ -403,7 +408,7 @@ class YouTubeActivity : AppCompatActivity() {
             append(YouTubeUrls.channelUrl(channel.channelId))
             append("\n\n")
             append(if (channel.lastRefreshedAt > 0) getString(R.string.youtube_last_refresh, dateTime(channel.lastRefreshedAt)) else getString(R.string.youtube_never_refreshed))
-            channel.lastError?.let { append("\n\n$it") }
+            channel.lastError?.let { append("\n\n${presentError(this@YouTubeActivity, it)}") }
         }
         val dialog = MaterialAlertDialogBuilder(this).setTitle(channel.title).setMessage(detail)
             .setPositiveButton(R.string.youtube_close, null)
@@ -582,7 +587,7 @@ class YouTubeActivity : AppCompatActivity() {
                 }
                 WorkInfo.State.SUCCEEDED -> context.getString(R.string.youtube_download_complete)
                 WorkInfo.State.CANCELLED -> context.getString(R.string.youtube_download_cancelled)
-                WorkInfo.State.FAILED -> context.getString(R.string.youtube_download_failed, info.outputData.getString("error") ?: context.getString(R.string.youtube_download_unknown_error))
+                WorkInfo.State.FAILED -> context.getString(R.string.youtube_download_failed, presentError(context, info.outputData.getString("error") ?: context.getString(R.string.youtube_download_unknown_error)))
             }
             holder.status.text = status
             holder.status.setTextColor(ContextCompat.getColor(context, when (info.state) {
@@ -622,6 +627,11 @@ class YouTubeActivity : AppCompatActivity() {
         const val MENU_LINK = 103
         const val MENU_LOCAL = 104
         const val MENU_UPDATE = 105
+        val REQUEST_LIMIT_ERROR = Regex("""\bHTTP(?:\s+(?:Error|status(?:\s+code)?))?\s*:?\s*429\b|\bsign\s+in\s+to\s+confirm(?:\s+that)?\s+you(?:['’]re|\s+are)\s+not\s+a\s+bot\b""", RegexOption.IGNORE_CASE)
+        fun presentError(context: Context, message: String): String =
+            if (!message.startsWith("Could not update the YouTube tools.") && REQUEST_LIMIT_ERROR.containsMatchIn(message)) {
+                context.getString(R.string.youtube_request_limited)
+            } else message
         fun createdAt(info: WorkInfo): Long = info.tags.firstOrNull { it.startsWith("youtube-created:") }?.removePrefix("youtube-created:")?.toLongOrNull() ?: 0L
         fun initial(title: String): String = title.trim().takeIf { it.isNotEmpty() }?.let { String(Character.toChars(it.codePointAt(0))).uppercase(Locale.getDefault()) } ?: "?"
     }

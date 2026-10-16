@@ -44,7 +44,7 @@ object SubscriptionFeeds {
                 onFailure = { subscription.copy(lastError = it.message?.take(240) ?: "Unable to refresh channel.") },
             )
         }
-        val videos = subscriptions.flatMap { subscription ->
+        val videosByChannel = subscriptions.map { subscription ->
             val cached = previous.videos.filter { it.channelId == subscription.channelId }.associateBy { it.videoId }
             val latest = feeds[subscription.channelId]?.getOrNull()?.videos.orEmpty()
                 .map { video ->
@@ -57,7 +57,12 @@ object SubscriptionFeeds {
                 .sortedByDescending { it.publishedAt }
                 .take(MAX_VIDEOS_PER_CHANNEL)
                 .map { it.copy(channelTitle = subscription.title) }
-        }.sortedByDescending { it.publishedAt }
+        }
+        // Interleave equal/unknown dates by each channel's source rank. Stable date sorting
+        // still puts real publication dates first without inventing timestamps for uploads.
+        val videos = (0 until (videosByChannel.maxOfOrNull { it.size } ?: 0))
+            .flatMap { rank -> videosByChannel.mapNotNull { it.getOrNull(rank) } }
+            .sortedByDescending { it.publishedAt }
             .distinctBy { it.videoId }
         return SubscriptionSnapshot(subscriptions, videos)
     }

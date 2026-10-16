@@ -15,6 +15,7 @@
     <color name="youtube_error">#F2A9AD</color>
     <dimen name="youtube_screen_padding">20dp</dimen>
     <dimen name="youtube_grid_gap">16dp</dimen>
+    <dimen name="youtube_grid_vertical_gap">8dp</dimen>
 
     <style name="YouTubeTheme" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/youtube_background</item>
@@ -54,6 +55,13 @@
         <item name="strokeColor">@android:color/transparent</item>
     </style>
 
+    <style name="YouTubeTabText" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
     <style name="YouTubeCompactButton" parent="Widget.Material3.Button">
         <item name="android:minHeight">48dp</item>
         <item name="android:minWidth">0dp</item>
@@ -63,6 +71,7 @@
         <item name="android:paddingRight">12dp</item>
         <item name="android:textSize">13sp</item>
         <item name="android:textAllCaps">false</item>
+        <item name="android:includeFontPadding">false</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textColor">@color/youtube_text</item>
         <item name="backgroundTint">@android:color/transparent</item>

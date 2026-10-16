@@ -95,8 +95,8 @@ class YouTubeViewModel(application: Application) : AndroidViewModel(application)
         super.onCleared()
     }
 
-    private fun refreshFeeds(token: Int): SubscriptionSnapshot = repo().refresh { done, total ->
-        publish(token) { it.copy(operation = YouTubeOperation.REFRESH, completedChannels = done, totalChannels = total) }
+    private fun refreshFeeds(token: Int): SubscriptionSnapshot = repo().refresh { done, total, saved ->
+        publish(token) { it.copy(operation = YouTubeOperation.REFRESH, completedChannels = done, totalChannels = total, snapshot = saved) }
     }
 
     private fun repo(): SubscriptionRepository = repository ?: SubscriptionRepository(getApplication()).also { repository = it }

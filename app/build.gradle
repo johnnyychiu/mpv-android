@@ -18,8 +18,8 @@ android {
         minSdkVersion 24
         targetSdk 36
 
-        versionCode 48
-        versionName "2026-09-17-release-youtube"
+        versionCode 49
+        versionName "2026-10-16-youtube.2"
 
         ndk {
             abiFilters.addAll(mpvAbis)

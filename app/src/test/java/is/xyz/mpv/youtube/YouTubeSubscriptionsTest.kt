@@ -135,6 +135,33 @@ class YouTubeSubscriptionsTest {
             mapOf(channelId to Result.success(ChannelFeed(channelId, "A", videos))), 100).videos.map { it.videoId })
     }
 
+    @Test fun unknownDatesInterleaveChannelsWithoutChangingTheirSourceOrder() {
+        val initial = SubscriptionSnapshot(listOf(YouTubeSubscription(channelId, "A"), YouTubeSubscription(otherChannel, "B")))
+        val first = listOf(video("zyxwvutsrqp", channelId, 0), video("abcdefghijk", channelId, 0), video("01234567890", channelId, 0))
+        val second = listOf(video("dQw4w9WgXcQ", otherChannel, 0), video("98765432109", otherChannel, 0))
+        val merged = SubscriptionFeeds.merge(initial, mapOf(
+            channelId to Result.success(ChannelFeed(channelId, "A", first)),
+            otherChannel to Result.success(ChannelFeed(otherChannel, "B", second)),
+        ), 100)
+        assertEquals(listOf("zyxwvutsrqp", "dQw4w9WgXcQ", "abcdefghijk", "98765432109", "01234567890"),
+            merged.videos.map { it.videoId })
+        assertTrue(merged.videos.all { it.publishedAt == 0L })
+        assertEquals(first.map { it.videoId }, merged.videos.filter { it.channelId == channelId }.map { it.videoId })
+        assertEquals(second.map { it.videoId }, merged.videos.filter { it.channelId == otherChannel }.map { it.videoId })
+    }
+
+    @Test fun knownDatesRemainChronologicalBeforeInterleavedUnknownUploads() {
+        val initial = SubscriptionSnapshot(listOf(YouTubeSubscription(channelId, "A"), YouTubeSubscription(otherChannel, "B")))
+        val first = listOf(video("abcdefghijk", channelId, 0), video("01234567890", channelId, 100))
+        val second = listOf(video("zyxwvutsrqp", otherChannel, 0), video("dQw4w9WgXcQ", otherChannel, 200))
+        val merged = SubscriptionFeeds.merge(initial, mapOf(
+            channelId to Result.success(ChannelFeed(channelId, "A", first)),
+            otherChannel to Result.success(ChannelFeed(otherChannel, "B", second)),
+        ), 300)
+        assertEquals(listOf("dQw4w9WgXcQ", "01234567890", "abcdefghijk", "zyxwvutsrqp"), merged.videos.map { it.videoId })
+        assertEquals(listOf(200L, 100L, 0L, 0L), merged.videos.map { it.publishedAt })
+    }
+
     private fun video(id: String, channel: String, time: Long) = YouTubeVideo(id, channel, "Video $id", "Channel", time)
     private fun feed(entries: String) = """<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015">
         <yt:channelId>$channelId</yt:channelId><title>Channel &amp; title</title>$entries</feed>"""

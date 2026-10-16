@@ -50,7 +50,7 @@ object YouTubeEngine {
             val normalizedUrl = YouTubeMediaPolicy.videoUrl(url)
             initialize(context)
             session.checkCancelled()
-            val info = readInfo(normalizedUrl, "bestvideo+bestaudio/best", session)
+            val info = readInfo(normalizedUrl, "bestvideo+bestaudio/best", session, checkFormats = true)
             val type = info.optString("_type")
             require(type.isEmpty() || type == "video") { "This link does not identify a single video." }
             val requestedFormats = info.optJSONArray("requested_formats")
@@ -259,10 +259,13 @@ object YouTubeEngine {
     private fun restrictedAvailability(value: String): Boolean = value in
         setOf("private", "premium_only", "subscriber_only", "needs_auth", "unavailable")
 
-    private fun readInfo(url: String, format: String, session: Session): JSONObject {
+    private fun readInfo(url: String, format: String, session: Session, checkFormats: Boolean = false): JSONObject {
         session.checkCancelled()
         val request = baseRequest(url).addOption("--dump-single-json").addOption("--skip-download")
             .addOption("--format", format)
+        // Metadata can contain expired or otherwise unusable CDN candidates. Let yt-dlp
+        // verify playback candidates before handing their URLs to the native player.
+        if (checkFormats) request.addOption("--check-formats")
         val response = YoutubeDL.getInstance().execute(request, processId = session.id, callback = null)
         session.checkCancelled()
         return try {

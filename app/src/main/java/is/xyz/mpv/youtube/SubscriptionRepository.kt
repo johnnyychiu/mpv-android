@@ -16,16 +16,39 @@ class SubscriptionRepository(context: Context) {
     private val preferences = appContext.getSharedPreferences("youtube_subscriptions", Context.MODE_PRIVATE)
     private val client = PublicYouTubeClient()
     private var snapshot: SubscriptionSnapshot? = null
+    private var appliedStarterVersion = 0
     @Volatile private var feedProcessId: String? = null
 
     fun load(): SubscriptionSnapshot {
         snapshot?.let { return it }
-        val encoded = preferences.getString("snapshot", null) ?: return SubscriptionSnapshot().also { snapshot = it }
+        val (saved, version) = readSavedSnapshot()
+        val seeded = HongKongChannels.seed(saved, version)
+        return if (seeded.appliedVersion != version) {
+            // The list and marker are one atomic preference value. A failed read or save must
+            // not consume the seed or replace the user's existing subscriptions.
+            save(seeded.snapshot, seeded.appliedVersion)
+        } else {
+            appliedStarterVersion = version
+            saved.also { snapshot = it }
+        }
+    }
+
+    private fun readSavedSnapshot(): Pair<SubscriptionSnapshot, Int> {
+        val encoded = preferences.getString("snapshot", null) ?: return SubscriptionSnapshot() to 0
         require(encoded.length <= MAX_CACHE_CHARS) { "Saved channel data is too large to read." }
         val root = try { JSONObject(encoded) } catch (error: Exception) {
             throw IOException("Saved channel data could not be read.", error)
         }
-        val channels = root.optJSONArray("channels") ?: JSONArray()
+        require(root.optInt("version", 0) == 1) { "Saved channel data uses an unsupported format." }
+        val channels = root.optJSONArray("channels") ?: throw IOException("Saved channel data is missing its channel list.")
+        val items = root.optJSONArray("videos") ?: throw IOException("Saved channel data is missing its video list.")
+        val starterVersion = if (root.has(STARTER_VERSION_KEY)) {
+            val value = root.opt(STARTER_VERSION_KEY)
+            require(value is Number && value.toInt() >= 0 && value.toDouble() == value.toInt().toDouble()) {
+                "Saved channel data has an invalid starter version."
+            }
+            value.toInt()
+        } else 0
         val subscriptions = (0 until minOf(channels.length(), SubscriptionFeeds.MAX_CHANNELS)).mapNotNull { index ->
             val item = channels.optJSONObject(index) ?: return@mapNotNull null
             val id = item.optString("id")
@@ -34,7 +57,6 @@ class SubscriptionRepository(context: Context) {
                 item.optString("error").takeIf { it.isNotBlank() }?.take(240))
         }.distinctBy { it.channelId }
         val subscribedIds = subscriptions.map { it.channelId }.toSet()
-        val items = root.optJSONArray("videos") ?: JSONArray()
         val videos = (0 until minOf(items.length(), SubscriptionFeeds.MAX_CHANNELS * SubscriptionFeeds.MAX_VIDEOS_PER_CHANNEL)).mapNotNull { index ->
             val item = items.optJSONObject(index) ?: return@mapNotNull null
             val id = item.optString("id")
@@ -42,7 +64,7 @@ class SubscriptionRepository(context: Context) {
             if (!YouTubeUrls.isVideoId(id) || channelId !in subscribedIds) return@mapNotNull null
             YouTubeVideo(id, channelId, item.optString("title").take(500), item.optString("channelTitle").take(300), item.optLong("published"))
         }
-        return SubscriptionFeeds.merge(SubscriptionSnapshot(subscriptions, videos), emptyMap(), 0).also { snapshot = it }
+        return SubscriptionFeeds.merge(SubscriptionSnapshot(subscriptions, videos), emptyMap(), 0) to starterVersion
     }
 
     fun addChannel(input: String): SubscriptionSnapshot {
@@ -56,16 +78,21 @@ class SubscriptionRepository(context: Context) {
         return save(SubscriptionFeeds.merge(initial, mapOf(id to result), System.currentTimeMillis()))
     }
 
-    fun refresh(onProgress: (Int, Int) -> Unit = { _, _ -> }): SubscriptionSnapshot {
-        val previous = load()
-        val results = linkedMapOf<String, Result<ChannelFeed>>()
-        previous.subscriptions.forEachIndexed { index, subscription ->
+    fun refresh(onProgress: (Int, Int, SubscriptionSnapshot) -> Unit = { _, _, _ -> }): SubscriptionSnapshot {
+        var current = load()
+        val subscriptions = current.subscriptions
+        onProgress(0, subscriptions.size, current)
+        subscriptions.forEachIndexed { index, subscription ->
             ensureActive()
-            onProgress(index, previous.subscriptions.size)
-            results[subscription.channelId] = fetchFeed(subscription.channelId)
+            val result = fetchFeed(subscription.channelId)
+            ensureActive()
+            current = save(SubscriptionFeeds.merge(current, mapOf(subscription.channelId to result), System.currentTimeMillis()))
+            // Persist before publishing: cancellation keeps completed channels and the prior
+            // cached videos for every channel whose request has not completed.
+            onProgress(index + 1, subscriptions.size, current)
         }
         ensureActive()
-        return save(SubscriptionFeeds.merge(previous, results, System.currentTimeMillis()))
+        return current
     }
 
     fun removeChannel(channelId: String): SubscriptionSnapshot = save(SubscriptionFeeds.remove(load(), channelId))
@@ -101,7 +128,7 @@ class SubscriptionRepository(context: Context) {
         }
     }
 
-    private fun save(value: SubscriptionSnapshot): SubscriptionSnapshot {
+    private fun save(value: SubscriptionSnapshot, starterVersion: Int = appliedStarterVersion): SubscriptionSnapshot {
         ensureActive()
         val channels = JSONArray()
         value.subscriptions.forEach { channel ->
@@ -113,10 +140,12 @@ class SubscriptionRepository(context: Context) {
             videos.put(JSONObject().put("id", video.videoId).put("channel", video.channelId).put("title", video.title)
                 .put("channelTitle", video.channelTitle).put("published", video.publishedAt))
         }
-        val encoded = JSONObject().put("version", 1).put("channels", channels).put("videos", videos).toString()
+        val encoded = JSONObject().put("version", 1).put(STARTER_VERSION_KEY, starterVersion)
+            .put("channels", channels).put("videos", videos).toString()
         require(encoded.length <= MAX_CACHE_CHARS) { "Saved channel data is too large." }
         ensureActive()
         if (!preferences.edit().putString("snapshot", encoded).commit()) throw IOException("The channel list could not be saved.")
+        appliedStarterVersion = starterVersion
         snapshot = value
         return value
     }
@@ -125,7 +154,10 @@ class SubscriptionRepository(context: Context) {
         if (Thread.currentThread().isInterrupted) throw CancellationException("Cancelled")
     }
 
-    private companion object { const val MAX_CACHE_CHARS = 6 * 1024 * 1024 }
+    private companion object {
+        const val MAX_CACHE_CHARS = 6 * 1024 * 1024
+        const val STARTER_VERSION_KEY = "hongKongStarterVersion"
+    }
 }
 
 /** Public requests with an anonymous reject-optional-cookies choice; no account or Google API. */

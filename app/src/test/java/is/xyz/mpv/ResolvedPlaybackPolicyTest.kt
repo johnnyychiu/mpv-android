@@ -1,6 +1,7 @@
 package `is`.xyz.mpv
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -69,13 +70,68 @@ class ResolvedPlaybackPolicyTest {
         assertTrue(options.contains("http-header-fields=%25%Accept: video/*\\, audio/*"))
     }
 
-    @Test fun titleCannotInjectOptionsAndLengthUsesJniEncoding() {
-        val options = ResolvedPlaybackPolicy.options(video, null, "标题 😀,pause=yes", emptyMap())
-        assertTrue(options.contains("force-media-title=%23%标题 😀,pause=yes,http-header-fields="))
+    @Test fun unicodeTitleRoundTripsWithoutConsumingTheNextOption() {
+        val title = "标题 😀,pause=yes"
+        val options = ResolvedPlaybackPolicy.options(video, null, title, emptyMap())
+        assertTrue(options.contains("force-media-title=%21%$title,http-header-fields="))
+        val parsed = parseUtf8Options(options)
+        assertEquals(title, parsed["force-media-title"])
+        assertEquals("no", parsed["pause"])
+        assertEquals("", parsed["http-header-fields"])
+        assertEquals("", parsed["audio-files"])
+        assertEquals(5, parsed.size)
+    }
+
+    @Test fun arbitraryTitleSyntaxCannotInjectOptions() {
+        val title = "小薯茄 🍟😃 \"quoted\" [unclosed ],pause=yes,%0%,audio-files=x\\"
+        val parsed = parseUtf8Options(ResolvedPlaybackPolicy.options(video, null, title, emptyMap()))
+        assertEquals(title, parsed["force-media-title"])
+        assertEquals("no", parsed["pause"])
+        assertEquals("", parsed["audio-files"])
+        assertEquals(5, parsed.size)
+    }
+
+    @Test fun truncatingTitleDoesNotSplitAnEmoji() {
+        val title = "a".repeat(1023) + "😀 suffix"
+        val parsed = parseUtf8Options(ResolvedPlaybackPolicy.options(video, null, title, emptyMap()))
+        assertEquals("a".repeat(1023), parsed["force-media-title"])
+        assertEquals("", parsed["http-header-fields"])
+    }
+
+    @Test fun unpairedSurrogatesUseAndroidJniThreeByteEncoding() {
+        val options = ResolvedPlaybackPolicy.options(video, null, "\uD83Dx\uDE00", emptyMap())
+        assertTrue(options.contains("force-media-title=%7%\uD83Dx\uDE00,http-header-fields="))
     }
 
     @Test fun titleControlsAreRemoved() {
         val options = ResolvedPlaybackPolicy.options(video, null, "a\nb\u0000c", emptyMap())
         assertTrue(options.contains("force-media-title=%5%a b c,"))
+    }
+
+    // Exercise mpv's byte-length framing independently using the JVM UTF-8 encoder.
+    // For well-formed, non-NUL text its bytes match Android GetStringUTFChars.
+    private fun parseUtf8Options(options: String): Map<String, String> {
+        val bytes = options.toByteArray(Charsets.UTF_8)
+        val parsed = linkedMapOf<String, String>()
+        var index = 0
+        while (index < bytes.size) {
+            val nameStart = index
+            while (index < bytes.size && bytes[index] != '='.code.toByte()) index++
+            assertTrue("Missing option separator", index < bytes.size)
+            val name = String(bytes, nameStart, index - nameStart, Charsets.UTF_8)
+            index++
+            assertEquals('%'.code.toByte(), bytes[index++])
+            val lengthStart = index
+            while (index < bytes.size && bytes[index] != '%'.code.toByte()) index++
+            assertTrue("Missing length separator", index < bytes.size)
+            val length = String(bytes, lengthStart, index - lengthStart, Charsets.US_ASCII).toInt()
+            index++
+            assertTrue("Option exceeds input", index + length <= bytes.size)
+            assertFalse("Duplicate option", parsed.containsKey(name))
+            parsed[name] = String(bytes, index, length, Charsets.UTF_8)
+            index += length
+            if (index < bytes.size) assertEquals(','.code.toByte(), bytes[index++])
+        }
+        return parsed
     }
 }

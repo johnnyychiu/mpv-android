@@ -1,20 +1,31 @@
 # YouTube subscriptions, playback, and downloads
 
-This fork adds a manually maintained channel list to mpv-android. It uses public YouTube channel pages and RSS feeds for recent uploads, and yt-dlp for media resolution and downloads. It does not sign into Google, synchronize an account's subscriptions, or use the YouTube Data API.
+This fork adds an editable channel list to mpv-android, with six Hong Kong starter subscriptions. It uses public YouTube channel pages and RSS feeds for recent uploads, and yt-dlp for media resolution and downloads. It does not sign into Google, synchronize an account's subscriptions, or use the YouTube Data API.
 
-The launcher opens the YouTube screen directly. **Feed** shows recent uploads with thumbnails, **Channels** manages followed channels, and **Downloads** shows saved and active jobs. The toolbar offers channel and video-link actions; its overflow menu opens **Local media** and the yt-dlp update action.
+The launcher opens the YouTube screen directly. The logo and **Feed**, **Channels**, and **Downloads** navigation share one row. **Feed** shows recent uploads with thumbnails, **Channels** manages followed channels, and **Downloads** shows saved and active jobs. Channel and video-link actions remain available; the overflow menu opens **Local media** and the yt-dlp update action.
 
 The interface uses flat neutral surfaces, square corners, and no outlines, following the requested visual direction. Thumbnails and titles take priority, with compact navigation and clear playback and download actions. The emphasis on content and simple navigation draws on [YouTube's design principles](https://blog.youtube/inside-youtube/design-principles-use-put-creators-center-stage/) and [Netflix's mobile design](https://about.netflix.com/en/news/introducing-exciting-new-ways-to-find-and-enjoy-your-next-favorite-on-mobile); the strict square treatment is specific to this fork.
 
-Feed and list content starts directly beneath the tabs. Persistent section headings, last-refresh timestamps, repeated tab titles, and subtitles are omitted to keep interface copy minimal.
+Feed and list content starts directly beneath the navigation row, with tighter spacing between items and actions. Persistent section headings, last-refresh timestamps, repeated tab titles, and subtitles are omitted to keep interface copy minimal.
 
 ## Following channels
+
+The `2026-10-16-youtube.2` update adds these starter subscriptions once on fresh and existing installations. Existing manual subscriptions are preserved. You can add or remove channels freely; removed starters do not return on later launches. The starter channel identities were verified on 2026-10-16.
+
+| Starter channel | Official channel link |
+| --- | --- |
+| Pomato 小薯茄 | [@pomatohk](https://youtube.com/@pomatohk) |
+| Mill MILK | [@mm.millmilk](https://youtube.com/@mm.millmilk) |
+| FHProductionHK | [@FHProductionHK](https://youtube.com/@FHProductionHK) |
+| 毛記電視 | [@100MOSTHongKong](https://youtube.com/@100MOSTHongKong) |
+| 米紙 | [@ricezi2hk](https://youtube.com/@ricezi2hk) |
+| 笑波子 | [@smilingboris1118](https://youtube.com/@smilingboris1118) |
 
 1. Open the app and choose **Channels**.
 2. Add a channel link, such as `https://www.youtube.com/@handle` or `https://www.youtube.com/channel/UC…`. Legacy `/c/` and `/user/` channel links are also accepted.
 3. Refresh to fetch the latest uploads for your saved channels. Remove a channel from the subscriptions screen when you no longer want to follow it.
 
-Channels and cached feed entries are stored locally. Failed refreshes retain previously cached uploads and show the channel error. Up to 100 channels and 50 cached uploads per channel are retained. YouTube's public feed contains a limited recent selection, so this is not a complete channel archive and uploads can be missed between infrequent refreshes. Feeds refresh when the screen opens and on request; this version does not run scheduled feed checks.
+Channels and cached feed entries are stored locally. During refresh, completed channels appear progressively, so you can browse their uploads while the remaining channels load. Failed refreshes retain previously cached uploads and show the channel error. Up to 100 channels and 50 cached uploads per channel are retained. YouTube's public feed contains a limited recent selection, so this is not a complete channel archive and uploads can be missed between infrequent refreshes. Feeds refresh when the screen opens and on request; this version does not run scheduled feed checks.
 
 ## Watching a video
 
@@ -91,7 +102,24 @@ The original mpv-android [MIT license](../LICENSE) is retained. The APK also inc
 
 ## Validation record
 
-Checks recorded on 2026-10-16 with the default debug build and an Android API 36 x86_64 emulator. Playback, download, and 32 unit-test checks preceded the final UI-only removal of repeated headings and timestamps; no backend code changed in that cleanup. The resulting APK was assembled and linted, with phone and tablet layouts rechecked. Earlier export checks are identified separately.
+Follow-up checks for `2026-10-16-youtube.2` (version code 49) were recorded on 2026-10-16 with the default debug build and an Android API 36 x86_64 emulator. Follow-up live playback remains unverified: bundled-extractor requests returned HTTP 403, including format checks, and a newer-extractor probe encountered YouTube's bot/sign-in and rate-limit responses.
+
+| Follow-up check | Observed result |
+| --- | --- |
+| `:app:testDefaultDebugUnitTest`, `:app:assembleDefaultDebug`, `:app:lintDefaultDebug` | Build succeeded; all 43 unit tests passed; lint reported zero errors and 93 warnings. |
+| Fresh installation | All six starter channels loaded, producing 90 videos with no channel errors. |
+| Upgrade installation | Existing manual subscriptions and cached videos were preserved while the six starters were added. |
+| Remove and re-add a starter | The removed starter stayed removed after restart and could be added manually again. |
+| Progressive refresh | 60 videos were already visible after four of six channels completed. |
+| Feed ordering | The first six cards represented all six channels in round-robin order. |
+| Compact phone navigation | Visually checked at 320 dp width and 540 dpi. At `font_scale=1.5`, the single-row navigation scrolled horizontally. |
+| Tablet layout | Visually checked at 1600 × 1000 pixels and 200 dpi. |
+| Chinese and emoji playback titles | Fixed the native option byte count; 11 playback-policy tests cover framing and validation. The former option-framing failure no longer occurred at runtime. |
+| Follow-up live playback | Pending: the framing fix reached media loading, but bundled-extractor requests returned HTTP 403. Earlier successful playback and exports below belong to the previous build. |
+| Optional extractor update probe | For Pomato video `_gDMltq-VoI`, official yt-dlp `2026.08.19` reached a bot/sign-in notice through the app's Watch action; the command-line probe returned HTTP 429 on the same network. This did not verify playback or establish that an extractor update resolves the failure. |
+| Final APK extractor | Wrapper `0.18.1` still bundles yt-dlp `2025.11.12`. The optional in-app updater is unchanged; the probe did not lead to a bundled-extractor update. |
+
+Previous `2026-09-17-release-youtube` build checks were recorded on 2026-10-16 with the default debug build and an Android API 36 x86_64 emulator. Playback, download, and 32 unit-test checks preceded that build's final UI-only removal of repeated headings and timestamps; no backend code changed in that cleanup. The resulting APK was assembled and linted, with phone and tablet layouts rechecked. Earlier export checks are identified separately.
 
 | Check | Observed result |
 | --- | --- |

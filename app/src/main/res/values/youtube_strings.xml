@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string translatable="false" name="youtube_wordmark">mpv</string>
-    <string translatable="false" name="youtube_brand">YouTube</string>
     <string translatable="false" name="youtube_brand_accessibility">mpv YouTube</string>
     <string translatable="false" name="youtube_feed">Feed</string>
     <string translatable="false" name="youtube_channels">Channels</string>
@@ -43,6 +41,7 @@
     <string translatable="false" name="youtube_details">Details</string>
     <string translatable="false" name="youtube_notice_details">%1$s. Tap for details.</string>
     <string translatable="false" name="youtube_cached_notice">Some channels could not refresh. Showing saved videos.</string>
+    <string translatable="false" name="youtube_request_limited">YouTube is limiting requests. Try again later.</string>
     <string translatable="false" name="youtube_channel_refresh_error">Refresh failed · Tap for details</string>
     <string translatable="false" name="youtube_last_refresh">Last refreshed %1$s</string>
     <string translatable="false" name="youtube_never_refreshed">No successful refresh yet</string>
