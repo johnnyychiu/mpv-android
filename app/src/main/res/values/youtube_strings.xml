@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string translatable="false" name="youtube_brand_accessibility">mpv YouTube</string>
+    <string translatable="false" name="youtube_feed">Feed</string>
+    <string translatable="false" name="youtube_channels">Channels</string>
+    <string translatable="false" name="youtube_downloads">Downloads</string>
+    <string translatable="false" name="youtube_add_channel">Add channel</string>
+    <string translatable="false" name="youtube_refresh">Refresh</string>
+    <string translatable="false" name="youtube_open_video">Paste a video link</string>
+    <string translatable="false" name="youtube_local_media">Local media</string>
+    <string translatable="false" name="youtube_update">Update yt-dlp</string>
+    <string translatable="false" name="youtube_channel_hint">Channel link or @handle</string>
+    <string translatable="false" name="youtube_video_hint">YouTube video link</string>
+    <string translatable="false" name="youtube_add">Add</string>
+    <string translatable="false" name="youtube_continue">Continue</string>
+    <string translatable="false" name="youtube_watch">Watch</string>
+    <string translatable="false" name="youtube_open">Open</string>
+    <string translatable="false" name="youtube_mp4">MP4</string>
+    <string translatable="false" name="youtube_mp3">MP3</string>
+    <string translatable="false" name="youtube_video_actions">Open video</string>
+    <string translatable="false" name="youtube_download_mp4">Download MP4 video</string>
+    <string translatable="false" name="youtube_download_mp3">Download MP3 audio</string>
+    <string translatable="false" name="youtube_empty_headline">No channels yet</string>
+    <string translatable="false" name="youtube_empty_copy">Add a channel link to get started.</string>
+    <string translatable="false" name="youtube_no_uploads_title">No videos yet</string>
+    <string translatable="false" name="youtube_no_uploads_copy">Refresh to check your channels.</string>
+    <string translatable="false" name="youtube_empty_channels_title">No channels yet</string>
+    <string translatable="false" name="youtube_empty_channels_copy">Add a channel link or @handle.</string>
+    <string translatable="false" name="youtube_empty_downloads_title">No downloads yet</string>
+    <string translatable="false" name="youtube_empty_downloads_copy">Choose MP4 or MP3 on a video.</string>
+    <string translatable="false" name="youtube_browse_feed">Browse your feed</string>
+    <string translatable="false" name="youtube_loading">Opening your library…</string>
+    <string translatable="false" name="youtube_refreshing">Checking for new videos…</string>
+    <string translatable="false" name="youtube_refresh_progress">Checking channel %1$d of %2$d…</string>
+    <string translatable="false" name="youtube_adding">Adding channel…</string>
+    <string translatable="false" name="youtube_removing">Removing channel…</string>
+    <string translatable="false" name="youtube_resolving">Getting your video ready…</string>
+    <string translatable="false" name="youtube_download_preparing">Reading video title…</string>
+    <string translatable="false" name="youtube_updating">Updating yt-dlp…</string>
+    <string translatable="false" name="youtube_cancel_operation">Cancel current operation</string>
+    <string translatable="false" name="youtube_dismiss_notice">Dismiss message</string>
+    <string translatable="false" name="youtube_details">Details</string>
+    <string translatable="false" name="youtube_notice_details">%1$s. Tap for details.</string>
+    <string translatable="false" name="youtube_cached_notice">Some channels could not refresh. Showing saved videos.</string>
+    <string translatable="false" name="youtube_request_limited">YouTube is limiting requests. Try again later.</string>
+    <string translatable="false" name="youtube_channel_refresh_error">Refresh failed · Tap for details</string>
+    <string translatable="false" name="youtube_last_refresh">Last refreshed %1$s</string>
+    <string translatable="false" name="youtube_never_refreshed">No successful refresh yet</string>
+    <plurals translatable="false" name="youtube_upload_count">
+        <item quantity="one">%d video in your library</item>
+        <item quantity="other">%d videos in your library</item>
+    </plurals>
+    <string translatable="false" name="youtube_remove_channel">Remove channel?</string>
+    <string translatable="false" name="youtube_remove_message">%1$s and its cached videos will be removed from your library. Your downloads will stay saved.</string>
+    <string translatable="false" name="youtube_remove">Remove</string>
+    <string translatable="false" name="youtube_close">Close</string>
+    <string translatable="false" name="youtube_remove_accessibility">Remove %1$s</string>
+    <string translatable="false" name="youtube_watch_accessibility">Watch %1$s, by %2$s</string>
+    <string translatable="false" name="youtube_watch_video">Watch %1$s</string>
+    <string translatable="false" name="youtube_mp4_accessibility">Download %1$s as MP4 video</string>
+    <string translatable="false" name="youtube_mp3_accessibility">Download %1$s as MP3 audio</string>
+    <string translatable="false" name="youtube_cancel_download">Cancel download of %1$s</string>
+    <string translatable="false" name="youtube_open_download">Open saved %1$s</string>
+    <string translatable="false" name="youtube_download_picker_failed">Could not open a save location. Please choose a location that supports creating files.</string>
+    <string translatable="false" name="youtube_download_grant_failed">This location does not grant lasting read and write access. Choose another save location and try again.</string>
+    <string translatable="false" name="youtube_download_generic">YouTube download</string>
+    <string translatable="false" name="youtube_download_queued">Queued</string>
+    <string translatable="false" name="youtube_download_waiting">Waiting for connection</string>
+    <string translatable="false" name="youtube_download_running">Downloading…</string>
+    <string translatable="false" name="youtube_download_progress">%1$s · %2$d%%</string>
+    <string translatable="false" name="youtube_download_complete">Saved and ready to play</string>
+    <string translatable="false" name="youtube_download_failed">Could not save: %1$s</string>
+    <string translatable="false" name="youtube_download_cancelled">Cancelled</string>
+    <string translatable="false" name="youtube_download_unknown_error">Try again, or update yt-dlp.</string>
+    <string translatable="false" name="youtube_download_open_failed">Could not open this saved file.</string>
+    <string translatable="false" name="youtube_play_failed">Could not open the video in mpv.</string>
+</resources>

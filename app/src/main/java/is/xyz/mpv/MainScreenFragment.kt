@@ -3,6 +3,8 @@ package `is`.xyz.mpv
 import `is`.xyz.filepicker.DocumentPickerFragment
 import `is`.xyz.mpv.preferences.PreferenceActivity
 import `is`.xyz.mpv.databinding.FragmentMainScreenBinding
+import `is`.xyz.mpv.youtube.YouTubeActivity
+import `is`.xyz.mpv.youtube.YouTubeUrls
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -85,7 +87,13 @@ class MainScreenFragment : Fragment(R.layout.fragment_main_screen) {
             val helper = Utils.OpenUrlDialog(requireContext())
             with (helper) {
                 builder.setPositiveButton(R.string.dialog_ok) { _, _ ->
-                    playFile(helper.text)
+                    val url = helper.text.trim()
+                    if (YouTubeUrls.isVideoUrl(url)) {
+                        startActivity(Intent(context, YouTubeActivity::class.java)
+                            .putExtra("youtube_url", YouTubeUrls.videoUrl(url)))
+                    } else {
+                        playFile(url)
+                    }
                 }
                 builder.setNegativeButton(R.string.dialog_cancel) { dialog, _ -> dialog.cancel() }
                 create().show()
@@ -103,6 +111,10 @@ class MainScreenFragment : Fragment(R.layout.fragment_main_screen) {
             saveChoice("") // will reset
             startActivity(Intent(context, PreferenceActivity::class.java))
         }
+        binding.youtubeBtn.setOnClickListener {
+            saveChoice("")
+            startActivity(Intent(context, YouTubeActivity::class.java))
+        }
 
         if (BuildConfig.DEBUG) {
             binding.settingsBtn.setOnLongClickListener { showDebugMenu(); true }
@@ -118,7 +130,7 @@ class MainScreenFragment : Fragment(R.layout.fragment_main_screen) {
             setItems(DEBUG_ACTIVITIES) { dialog, idx ->
                 dialog.dismiss()
                 val intent = Intent(Intent.ACTION_MAIN)
-                intent.setClassName(context, "${context.packageName}.${DEBUG_ACTIVITIES[idx]}")
+                intent.setClassName(context, "${MPVActivity::class.java.name.substringBeforeLast('.')}.${DEBUG_ACTIVITIES[idx]}")
                 startActivity(intent)
             }
             create().show()

@@ -2,6 +2,10 @@ package `is`.xyz.mpv
 
 import `is`.xyz.mpv.databinding.PlayerBinding
 import `is`.xyz.mpv.MPVLib.MpvEvent
+import `is`.xyz.mpv.youtube.OfflineLibraryPolicy
+import `is`.xyz.mpv.youtube.OfflineLibraryRepository
+import `is`.xyz.mpv.youtube.YouTubeActivity
+import `is`.xyz.mpv.youtube.YouTubeUrls
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.annotation.SuppressLint
@@ -51,7 +55,17 @@ import androidx.media.AudioAttributesCompat
 import androidx.media.AudioFocusRequestCompat
 import androidx.media.AudioManagerCompat
 import java.io.File
+import java.io.IOException
 import java.lang.IllegalArgumentException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 typealias ActivityResultCallback = (Int, Intent?) -> Unit
@@ -247,7 +261,12 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     }
 
     private var playbackHasStarted = false
+    private var playerInitialized = false
     private var onloadCommands = mutableListOf<Array<String>>()
+    private val offlinePlaylistScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var offlinePlaylistJob: Job? = null
+    private var offlinePlaylistCancellation: CancellationSignal? = null
+    private var offlinePlaylistGeneration = 0L
 
     // Activity lifetime
 
@@ -290,21 +309,37 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         updateOrientation(true)
 
         // Parse the intent
-        val filepath = parsePathFromIntent(intent)
-        if (intent.action == Intent.ACTION_VIEW) {
-            parseIntentExtras(intent.extras)
-        }
+        val offlinePlaylist = intent.hasExtra("youtube_offline_playlist")
+        val filepath = if (offlinePlaylist) null else parsePathFromIntent(intent)
 
-        if (filepath == null) {
+        if (filepath == null && !offlinePlaylist) {
             Log.e(TAG, "No file given, exiting")
             showToast(getString(R.string.error_no_file))
             finishWithResult(RESULT_CANCELED)
             return
         }
+        if (filepath != null && routeYouTubePage(filepath)) {
+            finish()
+            return
+        }
+
+        val resolvedOptions = try {
+            if (filepath != null) parseResolvedYouTubeOptions(intent, filepath) else null
+        } catch (_: IllegalArgumentException) {
+            showToast(getString(R.string.youtube_invalid_playback))
+            finishWithResult(RESULT_CANCELED)
+            return
+        }
+        if (!offlinePlaylist && resolvedOptions == null && intent.action == Intent.ACTION_VIEW)
+            parseIntentExtras(intent.extras)
 
         player.addObserver(this)
         player.initialize(filesDir.path, cacheDir.path)
-        player.playFile(filepath)
+        playerInitialized = true
+        if (offlinePlaylist)
+            loadOfflinePlaylist(intent, coldLaunch = true)
+        else
+            player.playFile(filepath!!, resolvedOptions)
 
         mediaSession = initMediaSession()
         updateMediaSession()
@@ -344,6 +379,8 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
 
     override fun onDestroy() {
         Log.v(TAG, "Exiting.")
+        cancelOfflinePlaylistLoad()
+        offlinePlaylistScope.cancel()
 
         // Suppress any further callbacks
         activityIsForeground = false
@@ -371,14 +408,22 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         // take the background service with us
         stopServiceRunnable.run()
 
-        player.removeObserver(this)
-        player.destroy()
+        if (playerInitialized) {
+            player.removeObserver(this)
+            player.destroy()
+            playerInitialized = false
+        }
         super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent?) {
         Log.v(TAG, "onNewIntent($intent)")
         super.onNewIntent(intent)
+        cancelOfflinePlaylistLoad()
+        if (intent?.hasExtra("youtube_offline_playlist") == true) {
+            loadOfflinePlaylist(intent, coldLaunch = !playbackHasStarted)
+            return
+        }
 
         // Happens when mpv is still running (not necessarily playing) and the user selects a new
         // file to be played from another app
@@ -386,9 +431,35 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         if (filepath == null) {
             return
         }
+        if (routeYouTubePage(filepath))
+            return
+
+        val incoming = intent ?: return
+        val resolvedOptions = try {
+            parseResolvedYouTubeOptions(incoming, filepath)
+        } catch (_: IllegalArgumentException) {
+            showToast(getString(R.string.youtube_invalid_playback))
+            return
+        }
+        if (resolvedOptions != null) {
+            // An explicit Play selection replaces background playback too. The options
+            // belong to the playlist entry, before either media stream is opened.
+            onloadCommands.clear()
+            setIntent(incoming)
+            player.playFile(filepath, resolvedOptions)
+            return
+        }
+
+        fun prepareReplacement() {
+            setIntent(incoming)
+            onloadCommands.clear()
+            if (incoming.action == Intent.ACTION_VIEW)
+                parseIntentExtras(incoming.extras)
+        }
 
         if (!activityIsForeground && didResumeBackgroundPlayback) {
             if (this.newIntentReplace) {
+                prepareReplacement()
                 MPVLib.command(arrayOf("loadfile", filepath, "replace"))
                 showToast(getString(R.string.notice_file_play))
             } else {
@@ -397,6 +468,7 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
             }
             moveTaskToBack(true)
         } else {
+            prepareReplacement()
             MPVLib.command(arrayOf("loadfile", filepath))
         }
     }
@@ -429,6 +501,11 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
     }
 
     override fun onPause() {
+        // A rejected incoming playback intent can finish before native initialization.
+        if (!playerInitialized) {
+            super.onPause()
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             if (isInMultiWindowMode || isInPictureInPictureMode) {
                 Log.v(TAG, "Going into multi-window mode")
@@ -1052,6 +1129,96 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
 
     // Intent/Uri parsing
 
+    private fun routeYouTubePage(filepath: String): Boolean {
+        if (!YouTubeUrls.isVideoUrl(filepath))
+            return false
+        startActivity(Intent(this, YouTubeActivity::class.java)
+            .putExtra("youtube_url", YouTubeUrls.videoUrl(filepath)))
+        return true
+    }
+
+    private fun parseResolvedYouTubeOptions(intent: Intent, filepath: String): String? {
+        if (!intent.getBooleanExtra("youtube_resolved", false))
+            return null
+        require(intent.action == Intent.ACTION_VIEW)
+        val headers = intent.getBundleExtra("youtube_http_headers")
+        require(headers == null || headers.size() <= 32)
+        val headerValues = headers?.keySet()?.associateWith { name ->
+            headers.getString(name) ?: throw IllegalArgumentException("Invalid HTTP header")
+        }.orEmpty()
+        // MPVActivity is exported: never accept arbitrary hosts, protocols, or mpv
+        // option names from Intent extras, even when the resolved marker is present.
+        return ResolvedPlaybackPolicy.options(
+            filepath,
+            intent.getStringExtra("youtube_audio_url"),
+            intent.getStringExtra("title"),
+            headerValues,
+            httpChunkSize = intent.getLongExtra("youtube_http_chunk_size", 0L).takeIf { it != 0L }
+        )
+    }
+
+    private fun cancelOfflinePlaylistLoad() {
+        offlinePlaylistGeneration++
+        offlinePlaylistCancellation?.cancel()
+        offlinePlaylistCancellation = null
+        offlinePlaylistJob?.cancel()
+        offlinePlaylistJob = null
+    }
+
+    private fun loadOfflinePlaylist(incoming: Intent, coldLaunch: Boolean) {
+        cancelOfflinePlaylistLoad()
+        val generation = offlinePlaylistGeneration
+        val cancellation = CancellationSignal()
+        offlinePlaylistCancellation = cancellation
+        offlinePlaylistJob = offlinePlaylistScope.launch {
+            try {
+                // Resolve the ID from private storage; exported Activity extras never
+                // supply playlist paths or arbitrary mpv options for this route.
+                val id = incoming.getStringExtra("youtube_offline_playlist")
+                val path = withContext(Dispatchers.IO) {
+                    val snapshot = OfflineLibraryRepository(applicationContext).load()
+                    ensureActive()
+                    val playlist = snapshot.playlists.find { it.id == id }
+                        ?: throw IllegalArgumentException(getString(R.string.youtube_offline_playlist_unavailable))
+                    require(playlist.downloadIds.isNotEmpty()) { getString(R.string.youtube_offline_playlist_empty) }
+                    val downloads = snapshot.downloads.associateBy { it.id }
+                    val paths = playlist.downloadIds.map { downloadId ->
+                        ensureActive()
+                        cancellation.throwIfCanceled()
+                        val download = downloads.getValue(downloadId)
+                        val uri = Uri.parse(OfflineLibraryPolicy.destination(download.destination))
+                        try {
+                            translateContentUri(uri, requireReadable = true, cancellationSignal = cancellation)
+                        } catch (error: Exception) {
+                            ensureActive()
+                            cancellation.throwIfCanceled()
+                            throw IOException(getString(R.string.youtube_offline_file_unavailable, download.title), error)
+                        }
+                    }
+                    ensureActive()
+                    "memory://#EXTM3U\n${paths.joinToString("\n")}\n"
+                }
+                if (generation != offlinePlaylistGeneration || !playerInitialized || isFinishing) return@launch
+                onloadCommands.clear()
+                setIntent(incoming)
+                player.playFile(path)
+                player.paused = false
+            } catch (_: CancellationException) {
+                // A newer selection or Activity destruction superseded this queue.
+            } catch (error: Exception) {
+                if (generation == offlinePlaylistGeneration && !isFinishing) {
+                    showToast(getString(R.string.youtube_offline_playback_failed, error.message.orEmpty()))
+                    if (coldLaunch) finishWithResult(RESULT_CANCELED)
+                }
+            } finally {
+                if (generation == offlinePlaylistGeneration) {
+                    offlinePlaylistCancellation = null
+                    offlinePlaylistJob = null
+                }
+            }
+        }
+    }
+
     private fun parsePathFromIntent(intent: Intent): String? {
         fun safeResolveUri(u: Uri?): String? {
             return if (u != null && u.isHierarchical && !u.isRelative)
@@ -1120,19 +1287,21 @@ class MPVActivity : AppCompatActivity(), MPVLib.EventObserver, TouchGesturesObse
         return filepath
     }
 
-    private fun translateContentUri(uri: Uri): String {
+    private fun translateContentUri(uri: Uri, requireReadable: Boolean = false, cancellationSignal: CancellationSignal? = null): String {
         val resolver = applicationContext.contentResolver
         Log.v(TAG, "Resolving content URI: $uri")
         try {
-            resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            resolver.openFileDescriptor(uri, "r", cancellationSignal)?.use { pfd ->
                 // See if we can skip the indirection and read the real file directly
                 val path = Utils.findRealPath(pfd.fd)
-                if (path != null) {
+                if (path != null && (!requireReadable ||
+                    (path.startsWith('/') && path.none { it.isISOControl() || it == '\\' }))) {
                     Log.v(TAG, "Found real file path: $path")
                     return path
                 }
-            }
+            } ?: if (requireReadable) throw IOException("The saved document could not be opened.") else Unit
         } catch(e: Exception) {
+            if (requireReadable) throw e
             Log.e(TAG, "Failed to open content fd: $e")
         }
 

@@ -1,18 +1,91 @@
 apply plugin: 'com.android.application'
 
+def bundledYtDlpVersion = '2026.08.19'
+def bundledYtDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/download/${bundledYtDlpVersion}/yt-dlp"
+def bundledYtDlpSha256 = '1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6'
+def bundledYtDlpSize = 3072469L
+def bundledYtDlpAssetsDir = layout.buildDirectory.dir('generated/ytDlpAssets')
+def offlineBuild = gradle.startParameter.offline
+
+// Keep the executable out of Git. Only APK asset merging requires this download;
+// compiling and running pure unit tests does not fetch the runtime.
+def prepareBundledYtDlp = tasks.register('prepareBundledYtDlp') {
+    inputs.property('version', bundledYtDlpVersion)
+    inputs.property('url', bundledYtDlpUrl)
+    inputs.property('sha256', bundledYtDlpSha256)
+    inputs.property('size', bundledYtDlpSize)
+    outputs.dir(bundledYtDlpAssetsDir)
+    doLast {
+        def target = bundledYtDlpAssetsDir.get().file('yt-dlp/yt-dlp').asFile
+        def verified = { File file ->
+            if (!file.isFile() || file.length() != bundledYtDlpSize) return false
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            file.withInputStream { input ->
+                byte[] buffer = new byte[65536]
+                int count
+                while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count)
+            }
+            digest.digest().encodeHex().toString() == bundledYtDlpSha256
+        }
+        if (verified(target)) return
+        if (offlineBuild) {
+            throw new GradleException('The pinned yt-dlp asset is missing or invalid. Run prepareBundledYtDlp once with network access before an offline APK build.')
+        }
+        java.nio.file.Files.createDirectories(target.parentFile.toPath())
+        def temporary = java.nio.file.Files.createTempFile(target.parentFile.toPath(), '.yt-dlp-', '.download')
+        try {
+            def connection = new URI(bundledYtDlpUrl).toURL().openConnection()
+            connection.connectTimeout = 30000
+            connection.readTimeout = 60000
+            connection.setRequestProperty('User-Agent', 'mpv-android-ytdlp-build')
+            connection.inputStream.withCloseable { input ->
+                java.nio.file.Files.newOutputStream(temporary).withCloseable { output ->
+                    byte[] buffer = new byte[65536]
+                    long total = 0
+                    int count
+                    while ((count = input.read(buffer)) != -1) {
+                        total += count
+                        if (total > bundledYtDlpSize) throw new GradleException('The yt-dlp download exceeds its pinned size.')
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            if (!verified(temporary.toFile())) throw new GradleException('The yt-dlp download does not match the pinned size and SHA-256.')
+            java.nio.file.Files.move(temporary, target.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            java.nio.file.Files.deleteIfExists(temporary)
+        }
+    }
+}
+
 ext.abiCodes = ["armeabi-v7a": 1, "arm64-v8a": 2, "x86":3, "x86_64":4]
 ext.universalBase = 8000
+
+// Native mpv is built separately. Restrict bundled Python/FFmpeg to the same ABIs.
+def mpvAbis = project.ext.abiCodes.keySet().findAll { abi ->
+    new File(project.projectDir, "src/main/libs/${abi}/libmpv.so").isFile() &&
+        new File(project.projectDir, "src/main/libs/${abi}/libplayer.so").isFile()
+}
 
 android {
     namespace 'is.xyz.mpv'
     compileSdk = 36
 
     defaultConfig {
-        minSdkVersion 23
+        applicationId 'is.xyz.mpv.ytdlp'
+        minSdkVersion 24
         targetSdk 36
 
-        versionCode 48
-        versionName "2026-09-17-release"
+        versionCode 51
+        versionName "2026-10-16-youtube.4"
+        buildConfigField 'String', 'YT_DLP_BUNDLED_VERSION', "\"${bundledYtDlpVersion}\""
+        buildConfigField 'String', 'YT_DLP_BUNDLED_SHA256', "\"${bundledYtDlpSha256}\""
+        buildConfigField 'long', 'YT_DLP_BUNDLED_SIZE', "${bundledYtDlpSize}L"
+
+        ndk {
+            abiFilters.addAll(mpvAbis)
+        }
 
         vectorDrawables.useSupportLibrary = true
 
@@ -41,6 +114,19 @@ android {
         buildConfig = true
     }
 
+    // Also works on Windows checkouts where the jniLibs symlink is a text file.
+    sourceSets.main.jniLibs.srcDirs = ['src/main/libs']
+    sourceSets.main.assets.srcDir(bundledYtDlpAssetsDir.get().asFile)
+
+    packaging {
+        jniLibs {
+            // yt-dlp's Python and FFmpeg executables must be extracted to disk.
+            useLegacyPackaging = true
+            // The wrapper stores runtime archives as native-library-shaped files.
+            keepDebugSymbols += ['**/*.zip.so']
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled = true
@@ -56,12 +142,28 @@ android {
 
             reset()
             // include only the ABIs that were actually built
-            project.ext.abiCodes.each { abi, _ ->
-                if (new File(project.projectDir, "src/main/jniLibs/${abi}").exists())
-                    include(abi)
+            mpvAbis.each { abi ->
+                include(abi)
             }
             universalApk true // build an APK with all ABIs too
         }
+    }
+}
+
+def verifyMpvNativeLibraries = tasks.register('verifyMpvNativeLibraries') {
+    doLast {
+        if (mpvAbis.isEmpty()) {
+            throw new GradleException('No mpv native libraries found. Build the native components first; see buildscripts/README.md.')
+        }
+    }
+}
+tasks.configureEach {
+    if (name.startsWith('merge') && name.endsWith('NativeLibs')) {
+        dependsOn(verifyMpvNativeLibraries)
+    }
+    // Lint also reads source-set assets directly when generating/analyzing its model.
+    if ((name.startsWith('merge') && name.endsWith('Assets')) || name.toLowerCase(Locale.ROOT).contains('lint')) {
+        dependsOn(prepareBundledYtDlp)
     }
 }
 
@@ -89,4 +191,11 @@ dependencies {
     implementation 'androidx.media:media:1.8.0'
     implementation 'androidx.preference:preference-ktx:1.2.1'
     implementation 'com.google.android.material:material:1.14.0'
+    implementation 'io.github.junkfood02.youtubedl-android:library:0.18.1'
+    implementation 'io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1'
+    implementation 'androidx.work:work-runtime-ktx:2.10.5'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4'
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.9.4'
+    implementation 'io.coil-kt:coil:2.7.0'
+    testImplementation 'junit:junit:4.13.2'
 }

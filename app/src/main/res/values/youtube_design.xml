@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="youtube_background">#101010</color>
+    <color name="youtube_surface">#191919</color>
+    <color name="youtube_surface_raised">#252525</color>
+    <color name="youtube_border">#333333</color>
+    <color name="youtube_text">#F2F2F2</color>
+    <color name="youtube_text_secondary">#B3B3B3</color>
+    <color name="youtube_text_muted">#929292</color>
+    <color name="youtube_accent">#B5A0FF</color>
+    <color name="youtube_accent_surface">#302942</color>
+    <color name="youtube_on_accent">#20162F</color>
+    <color name="youtube_success">#8DD4BD</color>
+    <color name="youtube_warning">#E6BE86</color>
+    <color name="youtube_error">#F2A9AD</color>
+    <dimen name="youtube_screen_padding">20dp</dimen>
+    <dimen name="youtube_grid_gap">16dp</dimen>
+    <dimen name="youtube_grid_vertical_gap">8dp</dimen>
+
+    <style name="YouTubeTheme" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/youtube_background</item>
+        <item name="android:colorBackground">@color/youtube_background</item>
+        <item name="colorSurface">@color/youtube_surface</item>
+        <item name="colorSurfaceVariant">@color/youtube_surface_raised</item>
+        <item name="colorOnSurface">@color/youtube_text</item>
+        <item name="colorOnSurfaceVariant">@color/youtube_text_secondary</item>
+        <item name="colorPrimary">@color/youtube_accent</item>
+        <item name="colorOnPrimary">@color/youtube_on_accent</item>
+        <item name="colorPrimaryContainer">@color/youtube_accent_surface</item>
+        <item name="colorOnPrimaryContainer">@color/youtube_accent</item>
+        <item name="colorSecondary">@color/youtube_accent</item>
+        <item name="colorOutline">@color/youtube_border</item>
+        <item name="colorError">@color/youtube_error</item>
+        <item name="android:textColorPrimary">@color/youtube_text</item>
+        <item name="android:textColorSecondary">@color/youtube_text_secondary</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="alertDialogTheme">@style/YouTubeDialogTheme</item>
+        <item name="materialAlertDialogTheme">@style/YouTubeDialogTheme</item>
+    </style>
+
+    <style name="YouTubeDialogTheme" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorSurface">@color/youtube_surface</item>
+        <item name="colorOnSurface">@color/youtube_text</item>
+        <item name="colorPrimary">@color/youtube_accent</item>
+        <item name="dialogCornerRadius">0dp</item>
+    </style>
+
+    <style name="YouTubeCard" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">@color/youtube_background</item>
+        <item name="cardCornerRadius">0dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="strokeColor">@android:color/transparent</item>
+    </style>
+
+    <style name="YouTubeTabText" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="YouTubeOfflineToolbarTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">18sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <style name="YouTubeCompactButton" parent="Widget.Material3.Button">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:insetTop">6dp</item>
+        <item name="android:insetBottom">6dp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textColor">@color/youtube_text</item>
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="cornerRadius">0dp</item>
+        <item name="iconTint">@color/youtube_text</item>
+        <item name="iconSize">16dp</item>
+        <item name="iconPadding">6dp</item>
+        <item name="strokeWidth">0dp</item>
+    </style>
+
+    <style name="YouTubeSecondaryButton" parent="YouTubeCompactButton">
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="android:textColor">@color/youtube_text_secondary</item>
+        <item name="iconTint">@color/youtube_text_secondary</item>
+    </style>
+
+    <style name="YouTubePrimaryButton" parent="YouTubeCompactButton">
+        <item name="android:insetTop">3dp</item>
+        <item name="android:insetBottom">3dp</item>
+        <item name="android:paddingLeft">20dp</item>
+        <item name="android:paddingRight">20dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/youtube_background</item>
+        <item name="backgroundTint">@color/youtube_text</item>
+        <item name="iconTint">@color/youtube_background</item>
+        <item name="cornerRadius">0dp</item>
+    </style>
+
+    <style name="YouTubeIconButton" parent="Widget.AppCompat.ImageButton">
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:minWidth">48dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="tint">@color/youtube_text_secondary</item>
+    </style>
+</resources>

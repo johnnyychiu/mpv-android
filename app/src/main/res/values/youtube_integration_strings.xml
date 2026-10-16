@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="youtube_app_name" translatable="false">mpv YouTube</string>
+    <string name="action_youtube">YouTube subscriptions</string>
+    <string name="youtube_invalid_playback">Could not play this YouTube stream. Refresh the video and try again.</string>
+</resources>

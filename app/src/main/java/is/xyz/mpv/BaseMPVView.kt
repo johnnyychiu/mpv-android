@@ -55,12 +55,29 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     protected abstract fun observeProperties()
 
     private var filePath: String? = null
+    private var fileOptions: String? = null
+    private var surfaceReady = false
 
     /**
-     * Set the first file to be played once the player is ready.
+     * Play a file, waiting for the surface if it is not ready yet.
+     * Options are scoped to this playlist entry and reset by mpv when it ends.
      */
-    fun playFile(filePath: String) {
+    fun playFile(filePath: String, options: String? = null) {
         this.filePath = filePath
+        this.fileOptions = options
+        if (surfaceReady)
+            playPendingFile()
+    }
+
+    private fun playPendingFile() {
+        val path = filePath ?: return
+        val options = fileOptions
+        filePath = null
+        fileOptions = null
+        if (options == null)
+            MPVLib.command(arrayOf("loadfile", path))
+        else
+            MPVLib.command(arrayOf("loadfile", path, "replace", "-1", options))
     }
 
     private var voInUse: String = "gpu"
@@ -83,19 +100,20 @@ abstract class BaseMPVView(context: Context, attrs: AttributeSet) : SurfaceView(
     override fun surfaceCreated(holder: SurfaceHolder) {
         Log.w(TAG, "attaching surface")
         MPVLib.attachSurface(holder.surface)
+        surfaceReady = true
         // This forces mpv to render subs/osd/whatever into our surface even if it would ordinarily not
         MPVLib.setOptionString("force-window", "yes")
+        // surfaceDestroyed disables video output. Restore it even when a new file
+        // was selected while the player had no surface.
+        MPVLib.setPropertyString("vo", voInUse)
 
         if (filePath != null) {
-            MPVLib.command(arrayOf("loadfile", filePath as String))
-            filePath = null
-        } else {
-            // We disable video output when the context disappears, enable it back
-            MPVLib.setPropertyString("vo", voInUse)
+            playPendingFile()
         }
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        surfaceReady = false
         Log.w(TAG, "detaching surface")
         MPVLib.setPropertyString("vo", "null")
         MPVLib.setPropertyString("force-window", "no")
