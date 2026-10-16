@@ -15,6 +15,15 @@
         android:contentDescription="@string/mpv_activity"
         app:srcCompat="@drawable/mpv_logo" />
 
+    <Button
+        android:id="@+id/youtubeBtn"
+        style="@style/Widget.AppCompat.Button.Colored"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
+        android:text="@string/action_youtube"
+        android:textColor="@android:color/primary_text_dark" />
+
     <!-- FIXME this could look better -->
     <LinearLayout
         android:layout_width="match_parent"

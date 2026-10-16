@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="auto">
 
     <uses-feature
@@ -13,9 +14,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:resizeableActivity="true"
         android:requestLegacyExternalStorage="true"
         android:preserveLegacyExternalStorage="true"
@@ -23,7 +27,7 @@
         android:icon="@mipmap/mpv_launcher_icon"
         android:roundIcon="@mipmap/mpv_launcher_icon"
         android:banner="@mipmap/ic_banner"
-        android:label="@string/mpv_activity"
+        android:label="@string/youtube_app_name"
         android:appCategory="video"
         android:localeConfig="@xml/locales_config">
 
@@ -211,6 +215,12 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize"
             android:theme="@style/FilePickerTheme"
+            android:exported="false" />
+
+        <activity
+            android:name=".youtube.YouTubeActivity"
+            android:theme="@style/YouTubeTheme"
+            android:label="@string/youtube_app_name"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -240,6 +250,11 @@
             android:parentActivityName=".preferences.PreferenceActivity"
             android:launchMode="singleTop"
             android:label="@string/pref_header_about_mpv" />
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <service
             android:name=".BackgroundPlaybackService"
